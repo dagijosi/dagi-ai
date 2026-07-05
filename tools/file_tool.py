@@ -1,16 +1,31 @@
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from pathlib import Path
 
+from .base_tool import BaseTool
 
-class FileTool:
+
+class FileTool(BaseTool):
     """Tool for file system operations."""
     
     def __init__(self, base_path: str = "."):
         self.base_path = Path(base_path)
     
-    def execute(self, task_data: Dict) -> Dict:
+    @property
+    def name(self) -> str:
+        return "file"
+    
+    @property
+    def description(self) -> str:
+        return "File system operations: read, write, list, delete, and search files"
+    
+    @property
+    def permissions(self) -> list:
+        return ["file_read", "file_write"]
+    
+    def execute(self, **kwargs) -> Dict[str, Any]:
         """Execute a file system operation."""
+        task_data = kwargs
         operation = task_data.get('operation')
         
         try:

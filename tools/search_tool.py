@@ -1,16 +1,31 @@
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from pathlib import Path
 
+from .base_tool import BaseTool
 
-class SearchTool:
+
+class SearchTool(BaseTool):
     """Tool for searching within files."""
     
     def __init__(self, base_path: str = "."):
         self.base_path = Path(base_path)
     
-    def execute(self, task_data: Dict) -> Dict:
+    @property
+    def name(self) -> str:
+        return "search"
+    
+    @property
+    def description(self) -> str:
+        return "Search operations: grep, regex search, and file finding"
+    
+    @property
+    def permissions(self) -> list:
+        return ["file_read"]
+    
+    def execute(self, **kwargs) -> Dict[str, Any]:
         """Execute a search operation."""
+        task_data = kwargs
         operation = task_data.get('operation')
         
         try:

@@ -1,5 +1,11 @@
 from typing import Dict, List, Optional
 from api.lmstudio_client import call_llm
+from tools.tool_manager import ToolManager
+from tools.file_tool import FileTool
+from tools.terminal_tool import TerminalTool
+from tools.search_tool import SearchTool
+from tools.git_tool import GitTool
+from tools.memory_tool import MemoryTool
 from .code_agent import CodeAgent
 from .memory_agent import MemoryAgent
 from .docs_agent import DocsAgent
@@ -74,8 +80,21 @@ Response Format:
 
 Always think step-by-step, coordinate agents effectively, and ensure the final result is cohesive and high-quality.
 """
-        self.code_agent = CodeAgent()
+        
+        # Initialize Tool Manager
+        self.tool_manager = ToolManager()
+        
+        # Register tools
+        self.tool_manager.register_tool(FileTool())
+        self.tool_manager.register_tool(TerminalTool())
+        self.tool_manager.register_tool(SearchTool())
+        self.tool_manager.register_tool(GitTool())
+        
+        # Initialize agents with tool manager
         self.memory_agent = MemoryAgent()
+        self.tool_manager.register_tool(MemoryTool(memory_agent=self.memory_agent))
+        
+        self.code_agent = CodeAgent(tool_manager=self.tool_manager)
         self.docs_agent = DocsAgent()
         self.planner_agent = PlannerAgent()
         self.general_agent = GeneralAgent()

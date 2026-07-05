@@ -1,15 +1,30 @@
 import subprocess
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
+
+from .base_tool import BaseTool
 
 
-class TerminalTool:
+class TerminalTool(BaseTool):
     """Tool for executing terminal commands."""
     
     def __init__(self, working_dir: str = "."):
         self.working_dir = working_dir
     
-    def execute(self, task_data: Dict) -> Dict:
+    @property
+    def name(self) -> str:
+        return "terminal"
+    
+    @property
+    def description(self) -> str:
+        return "Execute terminal commands with timeout and interactive support"
+    
+    @property
+    def permissions(self) -> list:
+        return ["terminal_execute"]
+    
+    def execute(self, **kwargs) -> Dict[str, Any]:
         """Execute a terminal command."""
+        task_data = kwargs
         command = task_data.get('command')
         timeout = task_data.get('timeout', 30)
         
@@ -43,8 +58,9 @@ class TerminalTool:
                 'error': str(e)
             }
     
-    def execute_interactive(self, task_data: Dict) -> Dict:
+    def execute_interactive(self, **kwargs) -> Dict[str, Any]:
         """Execute an interactive command."""
+        task_data = kwargs
         command = task_data.get('command')
         inputs = task_data.get('inputs', [])
         

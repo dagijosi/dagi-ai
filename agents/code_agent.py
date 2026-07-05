@@ -1,14 +1,14 @@
 from typing import Dict, Optional
 from api.lmstudio_client import call_llm
-from tools.file_tool import FileTool
-from tools.search_tool import SearchTool
+from tools.tool_manager import ToolManager
 
 
 class CodeAgent:
     """Specialized agent for code-related tasks."""
     
-    def __init__(self):
+    def __init__(self, tool_manager: Optional[ToolManager] = None):
         self.status = "idle"
+        self.tool_manager = tool_manager
         self.system_prompt = """
 You are a Code Agent specialized in software development tasks.
 
@@ -21,8 +21,6 @@ Your capabilities:
 
 Always provide clear, well-structured responses with code examples when appropriate.
 """
-        self.file_tool = FileTool()
-        self.search_tool = SearchTool()
     
     def execute(self, task_data: Dict) -> Dict:
         """Execute a code-related task."""
@@ -62,16 +60,23 @@ Always provide clear, well-structured responses with code examples when appropri
             code_content = code
             source = "direct input"
         elif file_path:
-            # Read the file
-            file_result = self.file_tool.execute({
-                'operation': 'read',
-                'file_path': file_path
-            })
+            # Read the file using tool manager
+            if self.tool_manager:
+                file_result = self.tool_manager.execute_tool(
+                    'file',
+                    operation='read',
+                    file_path=file_path
+                )
+            else:
+                # Fallback to direct tool instantiation
+                from tools.file_tool import FileTool
+                file_tool = FileTool()
+                file_result = file_tool.execute(operation='read', file_path=file_path)
             
-            if 'error' in file_result:
+            if 'error' in file_result or not file_result.get('success'):
                 return file_result
             
-            code_content = file_result['content']
+            code_content = file_result.get('content', '')
             source = file_path
         else:
             return {'error': 'Either code or file_path must be provided for analysis'}

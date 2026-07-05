@@ -1,15 +1,30 @@
 import subprocess
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
+
+from .base_tool import BaseTool
 
 
-class GitTool:
+class GitTool(BaseTool):
     """Tool for Git operations."""
     
     def __init__(self, working_dir: str = "."):
         self.working_dir = working_dir
     
-    def execute(self, task_data: Dict) -> Dict:
+    @property
+    def name(self) -> str:
+        return "git"
+    
+    @property
+    def description(self) -> str:
+        return "Git operations: status, add, commit, push, pull, branch, checkout, log, diff"
+    
+    @property
+    def permissions(self) -> list:
+        return ["git_read", "git_write"]
+    
+    def execute(self, **kwargs) -> Dict[str, Any]:
         """Execute a Git operation."""
+        task_data = kwargs
         operation = task_data.get('operation')
         
         try:

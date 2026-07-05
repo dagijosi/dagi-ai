@@ -9,14 +9,75 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agents import AgentManager, ManagerAgent
+from tools.tool_manager import ToolManager
 from tools.file_tool import FileTool
 from tools.terminal_tool import TerminalTool
 from tools.search_tool import SearchTool
 from tools.git_tool import GitTool
+from tools.memory_tool import MemoryTool
 from api.lmstudio_client import get_lmstudio_client
 
 
-app = FastAPI(title="Dagi-AI API", version="1.0.0")
+app = FastAPI(
+    title="Dagi-AI API",
+    description="""Multi-agent AI system with RAG capabilities, memory management, and tool orchestration.
+
+## Features
+- **Multi-Agent System**: Coordinate specialized agents (Code, Docs, Planner, General, UI Designer, QA Tester, Security Auditor, Database Expert, DevOps, API, Flutter, React)
+- **RAG Workflow**: Retrieve relevant context from memory before task execution
+- **Memory Management**: Store and retrieve knowledge across multiple collections (documents, code, conversation, notes, errors, projects)
+- **Tool Orchestration**: Centralized tool manager with permission checking and usage logging
+- **LLM Integration**: Direct LLM interaction via LM Studio
+
+## Architecture
+```
+Manager Agent → Planning Engine → Specialized Agents → Tool Manager → Tools
+```
+
+## Quick Start
+1. Check health: `GET /health`
+2. List available tools: `GET /tools/list`
+3. Execute agent task: `POST /agents/execute`
+4. Search memory: `POST /memory/search`
+""",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    contact={
+        "name": "Dagi-AI Support",
+        "email": "support@dagi-ai.com"
+    },
+    license_info={
+        "name": "MIT License",
+        "url": "https://opensource.org/licenses/MIT"
+    },
+    openapi_tags=[
+        {
+            "name": "Health",
+            "description": "Health check and system status endpoints"
+        },
+        {
+            "name": "Agents",
+            "description": "Agent execution, planning, and coordination endpoints"
+        },
+        {
+            "name": "LLM",
+            "description": "Direct LLM interaction and model management"
+        },
+        {
+            "name": "Memory",
+            "description": "Memory operations for RAG - save, search, delete, update memories and conversations"
+        },
+        {
+            "name": "Tools",
+            "description": "Tool operations - file, terminal, search, git operations via Tool Manager"
+        },
+        {
+            "name": "Documentation",
+            "description": "Documentation question answering and analysis"
+        }
+    ]
+)
 
 # CORS middleware
 app.add_middleware(
@@ -29,10 +90,7 @@ app.add_middleware(
 
 # Initialize agents and tools
 agent_manager = ManagerAgent()
-file_tool = FileTool()
-terminal_tool = TerminalTool()
-search_tool = SearchTool()
-git_tool = GitTool()
+tool_manager = agent_manager.tool_manager
 lmstudio_client = get_lmstudio_client()
 
 
@@ -542,7 +600,7 @@ class ConversationSaveResponse(BaseModel):
 
 
 # Health Check
-@app.get("/health", response_model=HealthResponse, responses={
+@app.get("/health", response_model=HealthResponse, tags=["Health"], summary="Check API health status", responses={
     200: {
         "description": "Service is healthy",
         "content": {
@@ -561,7 +619,7 @@ async def health_check():
 
 
 # Agent Endpoints
-@app.post("/agents/execute", response_model=SuccessResponse, responses={
+@app.post("/agents/execute", response_model=SuccessResponse, tags=["Agents"], summary="Execute task on specific agent", responses={
     200: {
         "description": "Task executed successfully",
         "content": {
@@ -599,7 +657,7 @@ async def execute_agent_task(request: TaskRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/agents/plan", response_model=SuccessResponse, responses={
+@app.post("/agents/plan", response_model=SuccessResponse, tags=["Agents"], summary="Create execution plan for complex task", responses={
     200: {
         "description": "Plan created successfully",
         "content": {
@@ -632,7 +690,7 @@ async def create_plan(request: PlanRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/agents/execute-plan", response_model=SuccessResponse, responses={
+@app.post("/agents/execute-plan", response_model=SuccessResponse, tags=["Agents"], summary="Execute multi-step plan across agents", responses={
     200: {
         "description": "Plan executed successfully",
         "content": {
@@ -658,7 +716,7 @@ async def execute_plan(plan: List[Dict]):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/agents/status", response_model=AgentStatusResponse, responses={
+@app.get("/agents/status", response_model=AgentStatusResponse, tags=["Agents"], summary="Get status of all agents", responses={
     200: {
         "description": "Agent statuses retrieved",
         "content": {
@@ -687,7 +745,7 @@ async def get_agent_status():
     return agent_manager.get_agent_status()
 
 
-@app.post("/agents/chat", response_model=SuccessResponse, responses={
+@app.post("/agents/chat", response_model=SuccessResponse, tags=["Agents"], summary="Chat with manager agent for complex tasks", responses={
     200: {
         "description": "Chat response generated",
         "content": {
@@ -724,7 +782,7 @@ async def chat_with_manager(request: ManagerRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/llm/chat", response_model=SuccessResponse, responses={
+@app.post("/llm/chat", response_model=SuccessResponse, tags=["LLM"], summary="Direct chat with LLM", responses={
     200: {
         "description": "LLM response generated",
         "content": {
@@ -769,7 +827,7 @@ async def chat_with_llm(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/llm/models", responses={
+@app.get("/llm/models", tags=["LLM"], summary="List available LLM models", responses={
     200: {
         "description": "Available models retrieved",
         "content": {
@@ -795,7 +853,7 @@ async def get_available_models():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/llm/health", responses={
+@app.get("/llm/health", tags=["LLM"], summary="Check LLM service health", responses={
     200: {
         "description": "LM Studio health status",
         "content": {
@@ -814,7 +872,7 @@ async def llm_health_check():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/memory/correction", response_model=SuccessResponse, responses={
+@app.post("/memory/correction", response_model=SuccessResponse, tags=["Memory"], summary="Store correction for learning", responses={
     200: {
         "description": "Correction stored successfully",
         "content": {
@@ -847,7 +905,7 @@ async def store_correction(request: CorrectionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/memory/corrections", response_model=SuccessResponse, responses={
+@app.get("/memory/corrections", response_model=SuccessResponse, tags=["Memory"], summary="Retrieve stored corrections", responses={
     200: {
         "description": "Corrections retrieved",
         "content": {
@@ -883,7 +941,7 @@ async def get_corrections(agent_type: Optional[str] = None, limit: int = 10):
 
 
 # Enhanced Memory Endpoints
-@app.post("/memory/save", response_model=MemorySaveResponse, responses={
+@app.post("/memory/save", response_model=MemorySaveResponse, tags=["Memory"], summary="Save memory with rich metadata", responses={
     200: {
         "description": "Memory saved successfully",
         "content": {
@@ -910,7 +968,7 @@ async def save_memory(request: MemorySaveRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/memory/search", response_model=MemorySearchResponse, responses={
+@app.post("/memory/search", response_model=MemorySearchResponse, tags=["Memory"], summary="Search memories with optional filters", responses={
     200: {
         "description": "Memory search completed",
         "content": {
@@ -946,7 +1004,7 @@ async def search_memory(request: MemorySearchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/memory/delete", response_model=SuccessResponse, responses={
+@app.delete("/memory/delete", response_model=SuccessResponse, tags=["Memory"], summary="Delete memory by ID", responses={
     200: {
         "description": "Memory deleted successfully",
         "content": {
@@ -975,7 +1033,7 @@ async def delete_memory(request: MemoryDeleteRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.put("/memory/update", response_model=SuccessResponse, responses={
+@app.put("/memory/update", response_model=SuccessResponse, tags=["Memory"], summary="Update memory content or metadata", responses={
     200: {
         "description": "Memory updated successfully",
         "content": {
@@ -1006,7 +1064,7 @@ async def update_memory(request: MemoryUpdateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/memory/conversation", response_model=ConversationSaveResponse, responses={
+@app.post("/memory/conversation", response_model=ConversationSaveResponse, tags=["Memory"], summary="Save conversation turn with metadata", responses={
     200: {
         "description": "Conversation saved successfully",
         "content": {
@@ -1037,7 +1095,104 @@ async def save_conversation(request: ConversationSaveRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/memory/collections", responses={
+# Tool Manager Endpoints
+@app.get("/tools/list", tags=["Tools"], summary="List all registered tools", responses={
+    200: {
+        "description": "Available tools retrieved",
+        "content": {
+            "application/json": {
+                "example": {
+                    "status": "success",
+                    "tools": [
+                        {
+                            "name": "file",
+                            "description": "File system operations: read, write, list, delete, and search files",
+                            "permissions": ["file_read", "file_write"],
+                            "requires_auth": False
+                        },
+                        {
+                            "name": "terminal",
+                            "description": "Execute terminal commands with timeout and interactive support",
+                            "permissions": ["terminal_execute"],
+                            "requires_auth": False
+                        }
+                    ]
+                }
+            }
+        }
+    }
+})
+async def list_tools():
+    """List all registered tools with their metadata."""
+    try:
+        tools = tool_manager.list_tools()
+        return {"status": "success", "tools": tools}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/tools/stats", tags=["Tools"], summary="Get tool usage statistics", responses={
+    200: {
+        "description": "Tool usage statistics retrieved",
+        "content": {
+            "application/json": {
+                "example": {
+                    "status": "success",
+                    "stats": {
+                        "total_tools": 5,
+                        "total_executions": 150,
+                        "tool_counts": {
+                            "file": 50,
+                            "terminal": 30,
+                            "search": 40,
+                            "git": 20,
+                            "memory": 10
+                        },
+                        "most_used_tool": "file"
+                    }
+                }
+            }
+        }
+    }
+})
+async def get_tool_stats():
+    """Get tool usage statistics."""
+    try:
+        stats = tool_manager.get_tool_stats()
+        return {"status": "success", "stats": stats}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/tools/usage", tags=["Tools"], summary="Get tool usage log", responses={
+    200: {
+        "description": "Tool usage log retrieved",
+        "content": {
+            "application/json": {
+                "example": {
+                    "status": "success",
+                    "usage_log": [
+                        {
+                            "timestamp": "2026-07-05T12:00:00",
+                            "tool": "file",
+                            "params": {"operation": "read", "file_path": "src/main.py"}
+                        }
+                    ]
+                }
+            }
+        }
+    }
+})
+async def get_tool_usage(tool_name: Optional[str] = None, limit: int = 100):
+    """Get tool usage log, optionally filtered by tool name."""
+    try:
+        usage_log = tool_manager.get_usage_log(tool_name=tool_name, limit=limit)
+        return {"status": "success", "usage_log": usage_log}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/memory/collections", tags=["Memory"], summary="List all memory collections", responses={
     200: {
         "description": "Available collections retrieved",
         "content": {
@@ -1059,7 +1214,7 @@ async def get_collections():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/memory/stats", responses={
+@app.get("/memory/stats", tags=["Memory"], summary="Get memory statistics", responses={
     200: {
         "description": "Memory statistics retrieved",
         "content": {
@@ -1096,7 +1251,7 @@ async def get_memory_stats():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/docs/question", response_model=SuccessResponse, responses={
+@app.post("/docs/question", response_model=SuccessResponse, tags=["Documentation"], summary="Ask question about documentation", responses={
     200: {
         "description": "Documentation question answered",
         "content": {
@@ -1129,7 +1284,7 @@ async def ask_documentation_question(request: DocQuestionRequest):
 
 
 # Tool Endpoints
-@app.post("/tools/file", response_model=SuccessResponse, responses={
+@app.post("/tools/file", response_model=SuccessResponse, tags=["Tools"], summary="Execute file system operations", responses={
     200: {
         "description": "File operation completed",
         "content": {
@@ -1150,14 +1305,13 @@ async def ask_documentation_question(request: DocQuestionRequest):
 async def file_operation(request: FileRequest):
     """Execute file system operations."""
     try:
-        task_data = request.dict(exclude_none=True)
-        result = file_tool.execute(task_data)
+        result = tool_manager.execute_tool('file', **request.dict(exclude_none=True))
         return {"status": "success", "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/tools/terminal", response_model=SuccessResponse, responses={
+@app.post("/tools/terminal", response_model=SuccessResponse, tags=["Tools"], summary="Execute terminal commands", responses={
     200: {
         "description": "Terminal command executed",
         "content": {
@@ -1178,14 +1332,13 @@ async def file_operation(request: FileRequest):
 async def terminal_operation(request: TerminalRequest):
     """Execute terminal commands."""
     try:
-        task_data = request.dict()
-        result = terminal_tool.execute(task_data)
+        result = tool_manager.execute_tool('terminal', **request.dict())
         return {"status": "success", "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/tools/search", response_model=SuccessResponse, responses={
+@app.post("/tools/search", response_model=SuccessResponse, tags=["Tools"], summary="Execute search operations", responses={
     200: {
         "description": "Search operation completed",
         "content": {
@@ -1209,14 +1362,13 @@ async def terminal_operation(request: TerminalRequest):
 async def search_operation(request: SearchRequest):
     """Execute search operations."""
     try:
-        task_data = request.dict(exclude_none=True)
-        result = search_tool.execute(task_data)
+        result = tool_manager.execute_tool('search', **request.dict(exclude_none=True))
         return {"status": "success", "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/tools/git", response_model=SuccessResponse, responses={
+@app.post("/tools/git", response_model=SuccessResponse, tags=["Tools"], summary="Execute Git operations", responses={
     200: {
         "description": "Git operation completed",
         "content": {
@@ -1237,8 +1389,7 @@ async def search_operation(request: SearchRequest):
 async def git_operation(request: GitRequest):
     """Execute Git operations."""
     try:
-        task_data = request.dict(exclude_none=True)
-        result = git_tool.execute(task_data)
+        result = tool_manager.execute_tool('git', **request.dict(exclude_none=True))
         return {"status": "success", "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -17,7 +17,7 @@ class SearchTool(BaseTool):
     
     @property
     def description(self) -> str:
-        return "Search operations: grep, regex search, and file finding"
+        return "Search operations: filename, extension, project, regex, grep, and semantic search"
     
     @property
     def permissions(self) -> list:
@@ -35,6 +35,14 @@ class SearchTool(BaseTool):
                 result = self._regex_search(task_data)
             elif operation == 'find':
                 result = self._find_files(task_data)
+            elif operation == 'filename':
+                result = self._search_by_filename(task_data)
+            elif operation == 'extension':
+                result = self._search_by_extension(task_data)
+            elif operation == 'project':
+                result = self._search_by_project(task_data)
+            elif operation == 'semantic':
+                result = self._semantic_search(task_data)
             else:
                 result = {'error': f'Unknown operation: {operation}'}
             
@@ -119,4 +127,100 @@ class SearchTool(BaseTool):
             'search_path': search_path,
             'files': [str(m.relative_to(self.base_path)) for m in matches if m.is_file()],
             'directories': [str(m.relative_to(self.base_path)) for m in matches if m.is_dir()]
+        }
+    
+    def _search_by_filename(self, task_data: Dict) -> Dict:
+        """Search for files by exact or partial filename."""
+        filename = task_data.get('filename')
+        search_path = task_data.get('search_path', '.')
+        exact_match = task_data.get('exact_match', False)
+        full_path = self.base_path / search_path
+        
+        if not full_path.exists():
+            return {'error': f'Search path not found: {search_path}'}
+        
+        matches = []
+        for item in full_path.rglob('*'):
+            if item.is_file():
+                if exact_match:
+                    if item.name == filename:
+                        matches.append(str(item.relative_to(self.base_path)))
+                else:
+                    if filename.lower() in item.name.lower():
+                        matches.append(str(item.relative_to(self.base_path)))
+        
+        return {
+            'status': 'found',
+            'filename': filename,
+            'exact_match': exact_match,
+            'search_path': search_path,
+            'matches': matches
+        }
+    
+    def _search_by_extension(self, task_data: Dict) -> Dict:
+        """Search for files by extension."""
+        extension = task_data.get('extension')
+        search_path = task_data.get('search_path', '.')
+        full_path = self.base_path / search_path
+        
+        if not extension.startswith('.'):
+            extension = '.' + extension
+        
+        if not full_path.exists():
+            return {'error': f'Search path not found: {search_path}'}
+        
+        matches = []
+        for item in full_path.rglob('*'):
+            if item.is_file() and item.suffix == extension:
+                matches.append(str(item.relative_to(self.base_path)))
+        
+        return {
+            'status': 'found',
+            'extension': extension,
+            'search_path': search_path,
+            'matches': matches
+        }
+    
+    def _search_by_project(self, task_data: Dict) -> Dict:
+        """Search for files within a specific project directory."""
+        project_name = task_data.get('project_name')
+        full_path = self.base_path
+        
+        project_path = None
+        for item in full_path.iterdir():
+            if item.is_dir() and project_name.lower() in item.name.lower():
+                project_path = item
+                break
+        
+        if not project_path:
+            return {'error': f'Project not found: {project_name}'}
+        
+        matches = []
+        for item in project_path.rglob('*'):
+            if item.is_file():
+                matches.append(str(item.relative_to(self.base_path)))
+        
+        return {
+            'status': 'found',
+            'project_name': project_name,
+            'project_path': str(project_path.relative_to(self.base_path)),
+            'matches': matches
+        }
+    
+    def _semantic_search(self, task_data: Dict) -> Dict:
+        """Perform semantic search using embeddings (placeholder for future implementation)."""
+        query = task_data.get('query')
+        search_path = task_data.get('search_path', '.')
+        
+        # This is a placeholder for semantic search using embeddings
+        # In a full implementation, this would:
+        # 1. Generate embeddings for the query
+        # 2. Compare with pre-computed file embeddings
+        # 3. Return most semantically similar files
+        
+        return {
+            'status': 'not_implemented',
+            'message': 'Semantic search requires embedding model integration',
+            'query': query,
+            'search_path': search_path
         }

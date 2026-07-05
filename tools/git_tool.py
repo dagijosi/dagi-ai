@@ -16,7 +16,7 @@ class GitTool(BaseTool):
     
     @property
     def description(self) -> str:
-        return "Git operations: status, add, commit, push, pull, branch, checkout, log, diff"
+        return "Git operations: status, add, commit, push, pull, branch, checkout, log, diff, restore, history"
     
     @property
     def permissions(self) -> list:
@@ -46,6 +46,10 @@ class GitTool(BaseTool):
                 result = self._git_log(task_data)
             elif operation == 'diff':
                 result = self._git_diff(task_data)
+            elif operation == 'restore':
+                result = self._git_restore(task_data)
+            elif operation == 'history':
+                result = self._git_history(task_data)
             else:
                 result = {'error': f'Unknown operation: {operation}'}
             
@@ -163,14 +167,98 @@ class GitTool(BaseTool):
         }
     
     def _git_diff(self, task_data: Dict) -> Dict:
-        """Show differences between commits or files."""
+        """Show differences between commits, branches, or files."""
         target = task_data.get('target', None)
+        source = task_data.get('source', None)
+        file_path = task_data.get('file_path', None)
+        staged = task_data.get('staged', False)
+        
         args = ['diff']
-        if target:
+        
+        if staged:
+            args.append('--staged')
+        
+        if source and target:
+            args.append(f'{source}..{target}')
+        elif target:
             args.append(target)
+        
+        if file_path:
+            args.append(file_path)
+        
         result = self._run_git_command(args)
         return {
             'operation': 'diff',
+            'source': source,
             'target': target,
+            'file_path': file_path,
+            'staged': staged,
+            'result': result
+        }
+    
+    def _git_restore(self, task_data: Dict) -> Dict:
+        """Restore working tree files or staged changes."""
+        file_path = task_data.get('file_path', '.')
+        staged = task_data.get('staged', False)
+        source = task_data.get('source', None)
+        
+        args = ['restore']
+        
+        if staged:
+            args.append('--staged')
+        
+        if source:
+            args.append('--source')
+            args.append(source)
+        
+        args.append(file_path)
+        
+        result = self._run_git_command(args)
+        return {
+            'operation': 'restore',
+            'file_path': file_path,
+            'staged': staged,
+            'source': source,
+            'result': result
+        }
+    
+    def _git_history(self, task_data: Dict) -> Dict:
+        """Get detailed commit history with changes."""
+        limit = task_data.get('limit', 10)
+        file_path = task_data.get('file_path', None)
+        since = task_data.get('since', None)  # e.g., '1 week ago'
+        
+        args = ['log', '-n', str(limit), '--pretty=format:%H|%an|%ae|%ad|%s', '--date=iso']
+        
+        if file_path:
+            args.append('--')
+            args.append(file_path)
+        
+        if since:
+            args.append(f'--since={since}')
+        
+        result = self._run_git_command(args)
+        
+        # Parse the output into structured data
+        commits = []
+        if result['status'] == 'success':
+            for line in result['stdout'].strip().split('\n'):
+                if line:
+                    parts = line.split('|', 4)
+                    if len(parts) == 5:
+                        commits.append({
+                            'hash': parts[0],
+                            'author': parts[1],
+                            'email': parts[2],
+                            'date': parts[3],
+                            'message': parts[4]
+                        })
+        
+        return {
+            'operation': 'history',
+            'limit': limit,
+            'file_path': file_path,
+            'since': since,
+            'commits': commits,
             'result': result
         }

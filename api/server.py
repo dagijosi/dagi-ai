@@ -139,7 +139,7 @@ class FileRequest(BaseModel):
     """Request model for file system operations."""
     operation: str = Field(
         ..., 
-        description="Type of file operation",
+        description="Type of file operation (read, write, list, delete, search, rename, copy, move, find, read_multiple)",
         example="read"
     )
     file_path: Optional[str] = Field(
@@ -167,6 +167,32 @@ class FileRequest(BaseModel):
         description="Path to search in",
         example="./"
     )
+    # New fields for enhanced operations
+    new_name: Optional[str] = Field(
+        default=None,
+        description="New name for rename operation",
+        example="new_name.py"
+    )
+    destination: Optional[str] = Field(
+        default=None,
+        description="Destination path for copy/move operations",
+        example="backup/"
+    )
+    name: Optional[str] = Field(
+        default=None,
+        description="Filename to search for (find operation)",
+        example="main"
+    )
+    extension: Optional[str] = Field(
+        default=None,
+        description="File extension to search for (find operation)",
+        example=".py"
+    )
+    file_paths: Optional[List[str]] = Field(
+        default=None,
+        description="List of file paths for read_multiple operation",
+        example=["src/main.py", "src/utils.py"]
+    )
 
 
 class TerminalRequest(BaseModel):
@@ -181,18 +207,23 @@ class TerminalRequest(BaseModel):
         description="Command timeout in seconds",
         example=30
     )
+    strict_mode: Optional[bool] = Field(
+        default=True,
+        description="Enable strict mode (whitelist enforcement)",
+        example=True
+    )
 
 
 class SearchRequest(BaseModel):
     """Request model for search operations."""
     operation: str = Field(
         ..., 
-        description="Type of search operation",
+        description="Type of search operation (grep, regex, find, filename, extension, project, semantic)",
         example="grep"
     )
-    pattern: str = Field(
-        ..., 
-        description="Search pattern",
+    pattern: Optional[str] = Field(
+        default=None,
+        description="Search pattern for grep/regex operations",
         example="def hello"
     )
     file_pattern: Optional[str] = Field(
@@ -215,13 +246,39 @@ class SearchRequest(BaseModel):
         description="Directory to search in",
         example="./src"
     )
+    # New fields for enhanced search operations
+    filename: Optional[str] = Field(
+        default=None,
+        description="Filename to search for (filename operation)",
+        example="Login"
+    )
+    exact_match: Optional[bool] = Field(
+        default=False,
+        description="Exact filename match (filename operation)",
+        example=False
+    )
+    extension: Optional[str] = Field(
+        default=None,
+        description="File extension to search for (extension operation)",
+        example=".tsx"
+    )
+    project_name: Optional[str] = Field(
+        default=None,
+        description="Project name to search within (project operation)",
+        example="Insurance Portal"
+    )
+    query: Optional[str] = Field(
+        default=None,
+        description="Query for semantic search (semantic operation)",
+        example="authentication component"
+    )
 
 
 class GitRequest(BaseModel):
     """Request model for Git operations."""
     operation: str = Field(
         ..., 
-        description="Git operation to perform",
+        description="Git operation to perform (status, add, commit, push, pull, branch, checkout, log, diff, restore, history)",
         example="commit"
     )
     files: Optional[str] = Field(
@@ -261,8 +318,29 @@ class GitRequest(BaseModel):
     )
     limit: Optional[int] = Field(
         default=10, 
-        description="Limit for log operations",
+        description="Limit for log/history operations",
         example=10
+    )
+    # New fields for enhanced Git operations
+    source: Optional[str] = Field(
+        default=None,
+        description="Source for diff operation",
+        example="main"
+    )
+    file_path: Optional[str] = Field(
+        default=None,
+        description="File path for diff/restore/history operations",
+        example="src/main.py"
+    )
+    staged: Optional[bool] = Field(
+        default=False,
+        description="Check staged changes (diff/restore operations)",
+        example=False
+    )
+    since: Optional[str] = Field(
+        default=None,
+        description="Time filter for history (e.g., '1 week ago')",
+        example="1 week ago"
     )
 
 

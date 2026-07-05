@@ -54,29 +54,44 @@ Always provide clear, well-structured responses with code examples when appropri
     def _analyze_code(self, task_data: Dict) -> Dict:
         """Analyze code structure and dependencies."""
         file_path = task_data.get('file_path')
+        code = task_data.get('code')
+        question = task_data.get('question', '')
         
-        # Read the file
-        file_result = self.file_tool.execute({
-            'operation': 'read',
-            'file_path': file_path
-        })
-        
-        if 'error' in file_result:
-            return file_result
-        
-        code_content = file_result['content']
+        # Get code content either from file or direct input
+        if code:
+            code_content = code
+            source = "direct input"
+        elif file_path:
+            # Read the file
+            file_result = self.file_tool.execute({
+                'operation': 'read',
+                'file_path': file_path
+            })
+            
+            if 'error' in file_result:
+                return file_result
+            
+            code_content = file_result['content']
+            source = file_path
+        else:
+            return {'error': 'Either code or file_path must be provided for analysis'}
         
         # Use LLM to analyze
+        user_prompt = f"Analyze this code from {source}:\n\n{code_content}\n\n"
+        if question:
+            user_prompt += f"Question: {question}\n\n"
+        user_prompt += "Provide analysis of structure, complexity, dependencies, and improvement suggestions."
+        
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": f"Analyze this code file: {file_path}\n\n{code_content}\n\nProvide analysis of structure, complexity, dependencies, and improvement suggestions."}
+            {"role": "user", "content": user_prompt}
         ]
         
         analysis = call_llm(messages)
         
         return {
             'status': 'analyzed',
-            'file': file_path,
+            'source': source,
             'analysis': analysis
         }
     

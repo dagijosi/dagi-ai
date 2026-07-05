@@ -361,11 +361,91 @@ Provide the final product in a well-structured, ready-to-use format.
             }
     
     def route_task(self, task_type: str, task_data: Dict) -> Dict:
-        """Route a task to the appropriate agent based on type."""
+        """Route a task to the appropriate agent based on type with RAG context."""
         agent = self.agents.get(task_type)
         if not agent:
             raise ValueError(f"Unknown agent type: {task_type}")
-        return agent.execute(task_data)
+        
+        # RAG Workflow: Retrieve relevant context from memory before executing
+        user_input = task_data.get('user_input', task_data.get('task', task_data.get('question', '')))
+        if user_input:
+            relevant_context = self._retrieve_relevant_context(user_input, task_type)
+            if relevant_context:
+                # Add retrieved context to task_data
+                task_data['rag_context'] = relevant_context
+        
+        result = agent.execute(task_data)
+        
+        # Save conversation to memory after execution
+        if user_input and 'result' in result:
+            self._save_conversation_to_memory(user_input, result, task_type, task_data)
+        
+        return result
+    
+    def _retrieve_relevant_context(self, query: str, task_type: str) -> Dict:
+        """Retrieve relevant context from memory based on query and task type."""
+        try:
+            # Determine which collections to search based on task type
+            collections_to_search = []
+            
+            if task_type == 'code':
+                collections_to_search = ['code', 'errors', 'projects']
+            elif task_type == 'docs':
+                collections_to_search = ['documents', 'notes']
+            elif task_type in ['react', 'flutter', 'api']:
+                collections_to_search = ['code', 'documents', 'projects']
+            elif task_type == 'general':
+                collections_to_search = ['documents', 'notes', 'conversation']
+            else:
+                collections_to_search = ['documents', 'code', 'notes']
+            
+            all_results = {}
+            
+            for collection in collections_to_search:
+                search_result = self.memory_agent.search_memory(
+                    query=query,
+                    collection=collection,
+                    n_results=3
+                )
+                
+                if search_result.get('status') == 'searched' and search_result.get('results'):
+                    all_results[collection] = {
+                        'results': search_result['results'],
+                        'metadatas': search_result['metadatas'],
+                        'distances': search_result['distances']
+                    }
+            
+            return all_results if all_results else None
+            
+        except Exception as e:
+            # If retrieval fails, continue without context
+            print(f"Error retrieving context from memory: {e}")
+            return None
+    
+    def _save_conversation_to_memory(self, user_input: str, result: Dict, 
+                                    agent_type: str, task_data: Dict) -> None:
+        """Save the conversation turn to memory with rich metadata."""
+        try:
+            # Extract the response from the result
+            if isinstance(result, dict):
+                response = str(result.get('result', result.get('answer', str(result))))
+            else:
+                response = str(result)
+            
+            # Get project from task_data or context
+            project = task_data.get('project') or task_data.get('context', {}).get('project')
+            
+            # Save conversation
+            self.memory_agent.save_conversation(
+                user_message=user_input,
+                assistant_message=response,
+                project=project,
+                agent=agent_type
+            )
+            
+        except Exception as e:
+            # If saving fails, log but don't interrupt the flow
+            print(f"Error saving conversation to memory: {e}")
     
     def execute_plan(self, plan: List[Dict]) -> List[Dict]:
         """Execute a multi-step plan coordinated by the planner."""

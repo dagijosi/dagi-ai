@@ -102,13 +102,50 @@ Always provide clear, well-structured responses with code examples when appropri
     
     def _generate_code(self, task_data: Dict) -> Dict:
         """Generate code based on requirements."""
-        requirements = task_data.get('requirements')
+        # Use the new architecture context fields
+        task = task_data.get('task') or task_data.get('goal') or task_data.get('requirements', '')
         language = task_data.get('language', 'python')
         context = task_data.get('context', '')
+        design_spec = task_data.get('design_spec', '')
+        previous_code = task_data.get('previous_code', '')
+        framework = task_data.get('framework', '')
+        use_design_spec = task_data.get('use_design_spec', False)
+        previous_results = task_data.get('previous_results', [])
+        
+        # Build comprehensive prompt
+        prompt = f"Generate {language} code for: {task}"
+        
+        # Add framework context
+        if framework:
+            prompt += f"\n\nFramework: {framework}"
+            # Adjust language based on framework
+            if framework == 'react':
+                language = 'javascript/tsx'
+            elif framework == 'flutter':
+                language = 'dart'
+        
+        # Add design spec if available and requested
+        if design_spec and use_design_spec:
+            prompt += f"\n\nDesign specifications to follow:\n{design_spec}"
+        
+        # Add previous code context if available
+        if previous_code:
+            prompt += f"\n\nPrevious code to build upon:\n{previous_code}"
+        
+        # Add additional context
+        if context:
+            prompt += f"\n\nAdditional context: {context}"
+        
+        # Add previous results for context
+        if previous_results:
+            prompt += f"\n\nPrevious steps completed: {len(previous_results)}"
+            for i, result in enumerate(previous_results):
+                if result.get('success'):
+                    prompt += f"\n  - Step {i+1}: {result.get('agent', 'unknown')} - {result.get('action', 'unknown')}"
         
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": f"Generate {language} code for: {requirements}\n\nContext: {context}\n\nProvide complete, well-commented code."}
+            {"role": "user", "content": prompt + "\n\nProvide complete, well-commented code that directly addresses the specific task requirements."}
         ]
         
         code = call_llm(messages)

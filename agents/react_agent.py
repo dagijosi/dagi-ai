@@ -62,19 +62,38 @@ Always provide clean, well-commented, and production-ready React code.
     
     def _generate_component(self, task_data: Dict) -> Dict:
         """Generate a React component."""
-        requirements = task_data.get('requirements', '')
+        # Use the new architecture context fields
+        task = task_data.get('task') or task_data.get('goal') or task_data.get('requirements', '')
         design_spec = task_data.get('design_spec', '')
-        context = task_data.get('context', {})
+        previous_code = task_data.get('previous_code', '')
+        framework = task_data.get('framework', 'react')
+        previous_results = task_data.get('previous_results', [])
         
-        prompt = f"Generate a React component for: {requirements}"
+        # Build comprehensive prompt
+        prompt = f"Generate a React component for: {task}"
+        
+        # Add design spec if available
         if design_spec:
             prompt += f"\n\nDesign specifications to follow:\n{design_spec}"
-        if context:
-            prompt += f"\n\nAdditional context: {context}"
+        
+        # Add previous code context if available
+        if previous_code:
+            prompt += f"\n\nPrevious code to build upon:\n{previous_code}"
+        
+        # Add framework context
+        if framework:
+            prompt += f"\n\nFramework: {framework}"
+        
+        # Add previous results for context
+        if previous_results:
+            prompt += f"\n\nPrevious steps completed: {len(previous_results)}"
+            for i, result in enumerate(previous_results):
+                if result.get('success'):
+                    prompt += f"\n  - Step {i+1}: {result.get('agent', 'unknown')} - {result.get('action', 'unknown')}"
         
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": prompt + "\n\nProvide complete, well-structured React code with imports, component, and styling."}
+            {"role": "user", "content": prompt + "\n\nProvide complete, well-structured React code with imports, component, and styling. Make sure the component directly addresses the specific task requirements."}
         ]
         
         code = call_llm(messages)
@@ -82,7 +101,7 @@ Always provide clean, well-commented, and production-ready React code.
         return {
             'status': 'generated',
             'code': code,
-            'requirements': requirements,
+            'requirements': task,
             'design_spec': design_spec
         }
     

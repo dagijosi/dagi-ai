@@ -55,12 +55,28 @@ Always provide detailed, actionable design specifications that developers can im
     
     def _design_ui(self, task_data: Dict) -> Dict:
         """Design a user interface."""
-        requirements = task_data.get('requirements', '')
+        # Use the new architecture context fields
+        task = task_data.get('task') or task_data.get('goal') or task_data.get('requirements', '')
         context = task_data.get('context', {})
+        previous_results = task_data.get('previous_results', [])
+        
+        # Build comprehensive prompt
+        prompt = f"Design a UI for: {task}"
+        
+        # Add additional context
+        if context:
+            prompt += f"\n\nContext: {context}"
+        
+        # Add previous results for context
+        if previous_results:
+            prompt += f"\n\nPrevious steps completed: {len(previous_results)}"
+            for i, result in enumerate(previous_results):
+                if result.get('success'):
+                    prompt += f"\n  - Step {i+1}: {result.get('agent', 'unknown')} - {result.get('action', 'unknown')}"
         
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": f"Design a UI for: {requirements}\n\nContext: {context}\n\nProvide detailed design specifications including layout, colors, typography, spacing, and component structure."}
+            {"role": "user", "content": prompt + "\n\nProvide detailed design specifications including layout, colors, typography, spacing, and component structure that are directly relevant to the specific task."}
         ]
         
         design = call_llm(messages)
@@ -68,7 +84,7 @@ Always provide detailed, actionable design specifications that developers can im
         return {
             'status': 'designed',
             'design_spec': design,
-            'requirements': requirements
+            'requirements': task
         }
     
     def _create_wireframe(self, task_data: Dict) -> Dict:

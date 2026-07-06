@@ -20,6 +20,15 @@ from .api_agent import APIAgent
 from .flutter_agent import FlutterAgent
 from .react_agent import ReactAgent
 
+# New architecture imports
+from planner.planner import Planner
+from executor.executor import Executor
+from context.manager import ContextManager, ContextRequest
+from state.shared_state import SharedState
+from events.event_bus import EventBus, get_global_event_bus
+from registry.agent_registry import AgentRegistry, BaseAgent
+from system_logging.logger import SystemLogger, get_global_logger
+
 
 class ManagerAgent:
     """Manager agent that coordinates between specialized agents using LLM."""
@@ -108,6 +117,23 @@ Always think step-by-step, coordinate agents effectively, and ensure the final r
         self.api_agent = APIAgent()
         self.flutter_agent = FlutterAgent()
         self.react_agent = ReactAgent()
+        
+        # New Architecture Components
+        self.shared_state = SharedState()
+        self.event_bus = get_global_event_bus()
+        self.logger = get_global_logger()
+        self.context_manager = ContextManager(
+            memory_agent=self.memory_agent,
+            file_tool=self.tool_manager.get_tool('file'),
+            search_tool=self.tool_manager.get_tool('search')
+        )
+        self.planner = Planner(llm_client=None)
+        self.executor = Executor(
+            agent_registry=None,  # Will be set up below
+            tool_manager=self.tool_manager,
+            event_bus=self.event_bus
+        )
+        self.agent_registry = AgentRegistry()
         
         self.agents = {
             'code': self.code_agent,
@@ -482,6 +508,121 @@ Provide the final product in a well-structured, ready-to-use format.
             name: agent.get_status()
             for name, agent in self.agents.items()
         }
+    
+    # New Architecture Methods
+    
+    async def execute_with_new_architecture(self, user_input: str) -> Dict:
+        """Execute task using the new planner-executor architecture."""
+        # Log task start
+        self.logger.info("Manager", f"Starting task with new architecture: {user_input}")
+        
+        # Register agents to registry (if not already registered)
+        if self.agent_registry.get_count() == 0:
+            self.register_agents_to_registry()
+        
+        # Initialize shared state
+        self.shared_state.initialize_task(user_input)
+        
+        # Create plan using planner
+        task_graph = self.planner.create_plan(user_input, context={"project": "current"})
+        
+        self.logger.info("Planner", f"Created plan with {len(task_graph.steps)} steps")
+        
+        # Update executor with agent registry
+        self.executor.agent_registry = self.agent_registry
+        
+        # Execute plan using executor (already async context)
+        execution_result = await self.executor.execute_plan(task_graph)
+        
+        # Log completion
+        self.logger.info("Executor", f"Plan execution completed: {execution_result['success']}")
+        
+        return {
+            "goal": user_input,
+            "plan": task_graph.to_dict(),
+            "execution": execution_result,
+            "shared_state": self.shared_state.get_all()
+        }
+    
+    def setup_event_handlers(self):
+        """Set up event handlers for logging."""
+        async def log_plan_started(event):
+            self.logger.info("EventBus", f"Plan started: {event.data.get('goal')}")
+        
+        async def log_step_completed(event):
+            self.logger.info("EventBus", f"Step {event.data.get('step')} completed by {event.data.get('agent')}")
+        
+        async def log_plan_failed(event):
+            self.logger.error("EventBus", f"Plan failed at step {event.data.get('failed_step')}: {event.data.get('error')}")
+        
+        async def log_plan_completed(event):
+            self.logger.info("EventBus", f"Plan completed: {event.data.get('successful_steps')}/{event.data.get('total_steps')} steps successful")
+        
+        # Register handlers
+        self.event_bus.subscribe("plan_started", log_plan_started)
+        self.event_bus.subscribe("step_completed", log_step_completed)
+        self.event_bus.subscribe("plan_failed", log_plan_failed)
+        self.event_bus.subscribe("plan_completed", log_plan_completed)
+    
+    def register_agents_to_registry(self):
+        """Register existing agents to the new agent registry."""
+        from registry.agent_adapter import AgentAdapter
+        
+        # Register all existing agents using the adapter
+        self.agent_registry.register(
+            AgentAdapter("code", self.code_agent),
+            metadata={"type": "code", "description": "Code analysis and generation"}
+        )
+        self.agent_registry.register(
+            AgentAdapter("memory", self.memory_agent),
+            metadata={"type": "memory", "description": "Memory management"}
+        )
+        self.agent_registry.register(
+            AgentAdapter("docs", self.docs_agent),
+            metadata={"type": "docs", "description": "Documentation handling"}
+        )
+        self.agent_registry.register(
+            AgentAdapter("planner", self.planner_agent),
+            metadata={"type": "planner", "description": "Task planning"}
+        )
+        self.agent_registry.register(
+            AgentAdapter("general", self.general_agent),
+            metadata={"type": "general", "description": "General tasks"}
+        )
+        self.agent_registry.register(
+            AgentAdapter("ui_designer", self.ui_designer_agent),
+            metadata={"type": "ui", "description": "UI/UX design"}
+        )
+        self.agent_registry.register(
+            AgentAdapter("qa_tester", self.qa_tester_agent),
+            metadata={"type": "qa", "description": "Quality assurance"}
+        )
+        self.agent_registry.register(
+            AgentAdapter("security_auditor", self.security_auditor_agent),
+            metadata={"type": "security", "description": "Security auditing"}
+        )
+        self.agent_registry.register(
+            AgentAdapter("database_expert", self.database_expert_agent),
+            metadata={"type": "database", "description": "Database expertise"}
+        )
+        self.agent_registry.register(
+            AgentAdapter("devops", self.devops_agent),
+            metadata={"type": "devops", "description": "DevOps operations"}
+        )
+        self.agent_registry.register(
+            AgentAdapter("api", self.api_agent),
+            metadata={"type": "api", "description": "API development"}
+        )
+        self.agent_registry.register(
+            AgentAdapter("flutter", self.flutter_agent),
+            metadata={"type": "flutter", "description": "Flutter development"}
+        )
+        self.agent_registry.register(
+            AgentAdapter("react", self.react_agent),
+            metadata={"type": "react", "description": "React development"}
+        )
+        
+        self.logger.info("Manager", f"Registered {self.agent_registry.get_count()} agents to registry")
 
 
 # Keep backward compatibility

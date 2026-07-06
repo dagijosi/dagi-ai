@@ -1473,6 +1473,219 @@ async def git_operation(request: GitRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# New Architecture API Endpoints
+
+class NewArchitectureRequest(BaseModel):
+    """Request model for new architecture execution."""
+    user_input: str = Field(
+        ..., 
+        description="User input/task to execute",
+        example="Create a simple Python function"
+    )
+
+
+@app.post("/architecture/execute", response_model=SuccessResponse, tags=["Agents"], summary="Execute task using new planner-executor architecture", responses={
+    200: {
+        "description": "Task executed with new architecture",
+        "content": {
+            "application/json": {
+                "example": {
+                    "status": "success",
+                    "result": {
+                        "goal": "Create a simple Python function",
+                        "plan": {
+                            "goal": "Create a simple Python function",
+                            "steps": [
+                                {"step": 1, "agent": "search", "action": "filename"},
+                                {"step": 2, "agent": "code", "action": "generate"},
+                                {"step": 3, "agent": "file", "action": "write_files"},
+                                {"step": 4, "agent": "memory", "action": "save_context"}
+                            ]
+                        },
+                        "execution": {
+                            "success": True,
+                            "results": []
+                        },
+                        "shared_state": {}
+                    }
+                }
+            }
+        }
+    }
+})
+async def execute_new_architecture(request: NewArchitectureRequest):
+    """Execute task using the new planner-executor architecture."""
+    try:
+        result = await agent_manager.execute_with_new_architecture(request.user_input)
+        return {"status": "success", "result": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/architecture/planner", tags=["Agents"], summary="Test planner component", responses={
+    200: {
+        "description": "Planner test result",
+        "content": {
+            "application/json": {
+                "example": {
+                    "status": "success",
+                    "result": {
+                        "goal": "Test task",
+                        "steps": []
+                    }
+                }
+            }
+        }
+    }
+})
+async def test_planner(user_input: str = "Test task"):
+    """Test the planner component."""
+    try:
+        task_graph = agent_manager.planner.create_plan(user_input)
+        return {"status": "success", "result": task_graph.to_dict()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/architecture/shared-state", tags=["Agents"], summary="Get current shared state", responses={
+    200: {
+        "description": "Shared state retrieved",
+        "content": {
+            "application/json": {
+                "example": {
+                    "status": "success",
+                    "state": {
+                        "goal": "Test task",
+                        "current_step": 0,
+                        "total_steps": 0
+                    }
+                }
+            }
+        }
+    }
+})
+async def get_shared_state():
+    """Get current shared state."""
+    try:
+        state = agent_manager.shared_state.get_all()
+        return {"status": "success", "state": state}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/architecture/events", tags=["Agents"], summary="Get event history", responses={
+    200: {
+        "description": "Event history retrieved",
+        "content": {
+            "application/json": {
+                "example": {
+                    "status": "success",
+                    "events": [
+                        {"name": "plan_started", "timestamp": "2026-07-05T21:00:00"},
+                        {"name": "step_completed", "timestamp": "2026-07-05T21:00:01"}
+                    ]
+                }
+            }
+        }
+    }
+})
+async def get_event_history(event_name: Optional[str] = None, limit: int = 100):
+    """Get event history, optionally filtered by event name."""
+    try:
+        events = agent_manager.event_bus.get_event_history(event_name=event_name, limit=limit)
+        return {"status": "success", "events": events}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/architecture/logs", tags=["Agents"], summary="Get system logs", responses={
+    200: {
+        "description": "System logs retrieved",
+        "content": {
+            "application/json": {
+                "example": {
+                    "status": "success",
+                    "logs": [
+                        {"timestamp": "2026-07-05T21:00:00", "level": "INFO", "component": "Manager", "message": "Task started"}
+                    ]
+                }
+            }
+        }
+    }
+})
+async def get_system_logs(level: Optional[str] = None, component: Optional[str] = None, limit: int = 100):
+    """Get system logs, optionally filtered by level or component."""
+    try:
+        from system_logging.logger import LogLevel
+        
+        log_level = None
+        if level:
+            log_level = LogLevel(level.upper())
+        
+        logs = agent_manager.logger.get_logs(level=log_level, component=component, limit=limit)
+        return {"status": "success", "logs": logs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/architecture/agents", tags=["Agents"], summary="Get registered agents", responses={
+    200: {
+        "description": "Registered agents retrieved",
+        "content": {
+            "application/json": {
+                "example": {
+                    "status": "success",
+                    "agents": [
+                        {"name": "code", "capabilities": ["read_code", "write_code"]},
+                        {"name": "memory", "capabilities": ["save_memory", "retrieve_memory"]}
+                    ]
+                }
+            }
+        }
+    }
+})
+async def get_registered_agents():
+    """Get all registered agents from the agent registry."""
+    try:
+        agents = agent_manager.agent_registry.list_agents()
+        return {"status": "success", "agents": agents}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/architecture/stats", tags=["Agents"], summary="Get architecture statistics", responses={
+    200: {
+        "description": "Architecture statistics retrieved",
+        "content": {
+            "application/json": {
+                "example": {
+                    "status": "success",
+                    "stats": {
+                        "registered_agents": 13,
+                        "registered_tools": 5,
+                        "total_events": 100,
+                        "total_logs": 50
+                    }
+                }
+            }
+        }
+    }
+})
+async def get_architecture_stats():
+    """Get statistics about the new architecture components."""
+    try:
+        stats = {
+            "registered_agents": agent_manager.agent_registry.get_count(),
+            "registered_tools": tool_manager.get_tool_stats()["total_tools"],
+            "total_events": len(agent_manager.event_bus.get_event_history(limit=1000)),
+            "total_logs": agent_manager.logger.get_log_stats()["total_logs"],
+            "shared_state_keys": list(agent_manager.shared_state.get_all().keys())
+        }
+        return {"status": "success", "stats": stats}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

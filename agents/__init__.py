@@ -14,6 +14,7 @@ from .devops_agent import DevOpsAgent
 from .api_agent import APIAgent
 from .flutter_agent import FlutterAgent
 from .react_agent import ReactAgent
+from .tanstack_agent import TanStackAgent
 
 __all__ = [
     'AgentManager',
@@ -31,4 +32,5 @@ __all__ = [
     'APIAgent',
     'FlutterAgent',
     'ReactAgent',
+    'TanStackAgent',
 ]

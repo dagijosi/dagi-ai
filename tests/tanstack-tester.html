@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TanStack Query Generator - API Ingestion Tool</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface-2: #242836;
+    --border: #2d3245;
+    --text: #e1e4ed;
+    --text-muted: #8b90a0;
+    --primary: #6366f1;
+    --primary-hover: #818cf8;
+    --success: #22c55e;
+    --error: #ef4444;
+    --code-bg: #131622;
+    --radius: 8px;
+    --radius-sm: 6px;
+    --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    --mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px;
+  }
+  .container { max-width: 900px; margin: 0 auto; }
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 24px 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .header-logo { width: 48px; height: 48px; background: linear-gradient(135deg, var(--primary), #8b5cf6); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 20px; color: white; box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
+  .header h1 { font-size: 24px; font-weight: 700; background: linear-gradient(135deg, var(--text), var(--primary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .header .subtitle { color: var(--text-muted); font-size: 13px; margin-top: 4px; line-height: 1.5; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .card-header { padding: 16px 20px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; background: var(--surface-2); }
+  .card-body { padding: 24px; }
+  .form-group { margin-bottom: 14px; }
+  .form-group:last-child { margin-bottom: 0; }
+  label { display: block; font-size: 11px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
+  label .hint { text-transform: none; letter-spacing: normal; font-weight: 400; font-size: 10px; margin-left: 6px; }
+  input, select, textarea {
+    width: 100%; padding: 9px 12px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text);
+    font-family: var(--font); font-size: 13px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    outline: none;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
+  textarea { font-family: var(--mono); font-size: 12px; line-height: 1.5; resize: vertical; min-height: 60px; }
+  select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b90a0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 36px; }
+  .inline-group { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 11px 24px; border: none; border-radius: var(--radius-sm);
+    font-family: var(--font); font-size: 14px; font-weight: 500;
+    cursor: pointer; transition: all 0.15s; width: 100%;
+  }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+  .btn-primary { background: linear-gradient(135deg, var(--primary), #8b5cf6); color: white; box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
+  .btn-primary:hover:not(:disabled) { background: linear-gradient(135deg, var(--primary-hover), #a78bfa); transform: translateY(-1px); box-shadow: 0 6px 16px rgba(99,102,241,0.4); }
+  .btn-primary:active:not(:disabled) { transform: translateY(0); }
+  .spinner { width: 15px; height: 15px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.6s linear infinite; display: none; }
+  .btn.loading .spinner { display: inline-block; }
+  .btn.loading .btn-text { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .status-bar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; margin-bottom: 14px; }
+  .status-bar.success { background: rgba(34,197,94,0.1); color: var(--success); border: 1px solid rgba(34,197,94,0.2); }
+  .status-bar.error { background: rgba(239,68,68,0.1); color: var(--error); border: 1px solid rgba(239,68,68,0.2); }
+  .status-bar.loading { background: rgba(99,102,241,0.1); color: var(--primary); border: 1px solid rgba(99,102,241,0.2); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+  .capture-block { border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+  .capture-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--code-bg); font-size: 11px; font-weight: 600; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.15s; }
+  .capture-header:hover { background: var(--surface-2); }
+  .capture-header .tag { font-size: 9px; padding: 2px 8px; border-radius: 4px; font-weight: 700; margin-left: auto; text-transform: uppercase; }
+  .tag.success-tag { background: rgba(34,197,94,0.2); color: var(--success); border: 1px solid rgba(34,197,94,0.3); }
+  .tag.error-tag { background: rgba(239,68,68,0.2); color: var(--error); border: 1px solid rgba(239,68,68,0.3); }
+  .capture-body { padding: 14px; font-family: var(--mono); font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; background: var(--code-bg); }
+  .code-block { background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+  .code-header { display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 11px; color: var(--text-muted); font-weight: 600; }
+  .code-body { padding: 16px; overflow-x: auto; font-family: var(--mono); font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; max-height: 500px; overflow-y: auto; }
+  .file-item { display: flex; align-items: center; gap: 10px; padding: 9px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 5px; cursor: pointer; transition: border-color 0.15s; }
+  .file-item:hover { border-color: var(--primary); }
+  .file-icon { width: 26px; height: 26px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+  .file-icon.ok { background: rgba(34,197,94,0.15); color: var(--success); }
+  .file-icon.fail { background: rgba(239,68,68,0.15); color: var(--error); }
+  .file-info { flex: 1; min-width: 0; }
+  .file-path { font-family: var(--mono); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-meta { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+  .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 50px 20px; color: var(--text-muted); text-align: center; }
+  .empty-state .icon { font-size: 32px; opacity: 0.4; }
+  .empty-state p { font-size: 14px; }
+  .empty-state .sub { font-size: 12px; opacity: 0.7; line-height: 1.6; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .fade-in { animation: fadeIn 0.25s ease-out; }
+  .toast { position: fixed; bottom: 24px; right: 24px; padding: 14px 24px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; color: white; z-index: 100; animation: fadeIn 0.2s ease-out; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
+  .toast.info { background: linear-gradient(135deg, var(--primary), #8b5cf6); }
+  .toast.success { background: linear-gradient(135deg, var(--success), #22c55e); }
+  .toast.error { background: linear-gradient(135deg, var(--error), #ef4444); }
+  
+  /* Chat Interface Styles */
+  .chat-section { margin-top: 24px; }
+  .chat-messages { max-height: 400px; overflow-y: auto; margin-bottom: 16px; padding: 16px; background: var(--code-bg); border-radius: var(--radius-sm); border: 1px solid var(--border); }
+  .chat-message { margin-bottom: 12px; padding: 12px 16px; border-radius: var(--radius-sm); max-width: 80%; }
+  .chat-message.user { background: var(--primary); color: white; margin-left: auto; }
+  .chat-message.assistant { background: var(--surface-2); color: var(--text); margin-right: auto; }
+  .chat-message .role { font-size: 10px; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; opacity: 0.7; }
+  .chat-input-group { display: flex; gap: 8px; }
+  .chat-input-group input { flex: 1; }
+  .chat-input-group button { width: auto; padding: 0 20px; }
+  
+  /* Action Buttons */
+  .action-buttons { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .action-btn { padding: 8px 16px; font-size: 12px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); cursor: pointer; transition: all 0.15s; }
+  .action-btn:hover { background: var(--surface); border-color: var(--primary); color: var(--primary); }
+  .action-btn.primary { background: var(--primary); color: white; border-color: var(--primary); }
+  .action-btn.primary:hover { background: var(--primary-hover); }
+  
+  /* Process Timeline Styles */
+  .timeline { margin-top: 16px; }
+  .timeline-item { display: flex; gap: 12px; padding: 12px 0; border-left: 2px solid var(--border); padding-left: 20px; position: relative; }
+  .timeline-item::before { content: ''; position: absolute; left: -6px; top: 16px; width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
+  .timeline-item.completed::before { background: var(--success); }
+  .timeline-item.error::before { background: var(--error); }
+  .timeline-item.in-progress::before { background: var(--primary); animation: pulse 1.5s infinite; }
+  .timeline-item:last-child { border-left-color: transparent; }
+  .timeline-content { flex: 1; }
+  .timeline-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .timeline-description { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+  .timeline-meta { font-size: 11px; color: var(--text-muted); opacity: 0.7; }
+  .timeline-status { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; margin-left: auto; }
+  .timeline-status.completed { background: rgba(34,197,94,0.2); color: var(--success); }
+  .timeline-status.error { background: rgba(239,68,68,0.2); color: var(--error); }
+  .timeline-status.in-progress { background: rgba(99,102,241,0.2); color: var(--primary); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  
+  /* Summary Cards */
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 16px; }
+  .summary-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; }
+  .summary-card .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+  .summary-card .value { font-size: 18px; font-weight: 700; color: var(--text); }
+  .summary-card .value.highlight { color: var(--primary); }
+  .summary-card .value.success { color: var(--success); }
+  .summary-card .value.error { color: var(--error); }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  @media (max-width: 600px) { body { padding: 16px; } .inline-group { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="header-logo">TS</div>
+    <div>
+      <h1>TanStack Query Generator</h1>
+      <div class="subtitle">Enter your API endpoint &rarr; we call it, capture the response, and generate TypeScript types, API functions, and TanStack Query hooks</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">&#9881; Server Config</div>
+    <div class="card-body">
+      <div class="form-group">
+        <label>FastAPI Server URL <span class="hint">(auto-detected if served from same server)</span></label>
+        <input type="text" id="serverUrl" value="http://localhost:8000" placeholder="leave empty to use current origin">
+      </div>
+      <div class="form-group">
+        <label>Target Directory <span class="hint">where to create the files</span></label>
+        <input type="text" id="targetPath" value="D:/Projects/test-connections" placeholder="D:/Projects/my-project">
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">&#127760; API Endpoint Configuration</div>
+    <div class="card-body">
+      <div class="inline-group">
+        <div class="form-group">
+          <label>HTTP Method</label>
+          <select id="httpMethod">
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="PATCH">PATCH</option>
+            <option value="DELETE">DELETE</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>API URL</label>
+          <input type="text" id="apiUrl" placeholder="https://api.example.com/api/v1/products">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Request Body <span class="hint">(optional &mdash; for POST/PUT/PATCH)</span></label>
+        <textarea id="requestBody" rows="3" class="code" placeholder='{"name": "string", "price": 99.99}'></textarea>
+      </div>
+      <div class="form-group">
+        <label>Authorization Header <span class="hint">(optional &mdash; e.g. Bearer token)</span></label>
+        <input type="text" id="authHeader" placeholder="Bearer eyJhbGciOiJIUzI1NiIs...">
+      </div>
+      <div class="form-group">
+        <label>URL Query Parameters <span class="hint">(optional &mdash; key=value, one per line)</span></label>
+        <textarea id="urlParams" rows="2" class="code" placeholder="page=1&#10;limit=20&#10;sort=name"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <button type="button" class="btn btn-primary" id="generateBtn" onclick="generate()">
+    <span class="spinner"></span>
+    <span class="btn-text">&#9654; Generate Types &amp; Hooks</span>
+  </button>
+
+  <div style="margin-top: 24px;">
+    <!-- Process Timeline -->
+    <div id="timelineSection" class="card" style="display: none;">
+      <div class="card-header">&#9201; Process Timeline</div>
+      <div class="card-body">
+        <div id="timeline" class="timeline"></div>
+        
+        <!-- Summary Cards -->
+        <div id="summaryGrid" class="summary-grid" style="display: none;"></div>
+      </div>
+    </div>
+    
+    <div id="status"></div>
+    <div id="captured"></div>
+    <div id="results"></div>
+    
+    <!-- Chat Interface for AI refinement -->
+    <div id="chatSection" class="chat-section" style="display: none;">
+      <div class="card">
+        <div class="card-header">&#128172; Chat with AI to Refine Code</div>
+        <div class="card-body">
+          <div id="chatMessages" class="chat-messages"></div>
+          <div class="chat-input-group">
+            <input type="text" id="chatInput" placeholder="Ask the AI to modify or explain the generated code..." onkeypress="if(event.key === 'Enter') sendChatMessage()">
+            <button type="button" class="btn btn-primary" onclick="sendChatMessage()">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Global state
+let currentGeneratedCode = '';
+let currentApiCapture = null;
+let chatHistory = [];
+let processTimeline = [];
+let startTime = null;
+
+function getEl(id) { return document.getElementById(id); }
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function showToast(msg, type) {
+  const t = document.createElement('div');
+  t.className = 'toast ' + (type || 'info');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(() => showToast('Copied!', 'success')).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); ta.remove();
+    showToast('Copied!', 'success');
+  });
+}
+
+function syntaxHighlight(json) {
+  if (typeof json !== 'string') json = JSON.stringify(json, null, 2);
+  const d = document.createElement('div');
+  d.textContent = json;
+  json = d.innerHTML;
+  return json.replace(
+    /("(?:[^"\\]|\\.)*")(\s*:)?|\b(true|false|null)\b|\b(\d+\.?\d*)\b/g,
+    (m, str, colon, literal, num) => {
+      if (colon !== undefined) return '<span style="color:#818cf8;">' + str + '</span>:';
+      if (str !== undefined) return '<span style="color:#22c55e;">' + str + '</span>';
+      if (literal !== undefined) return '<span style="color:#f59e0b;">' + literal + '</span>';
+      if (num !== undefined) return '<span style="color:#f472b6;">' + num + '</span>';
+      return m;
+    }
+  );
+}
+
+// Chat with AI functionality
+async function sendChatMessage() {
+  const input = getEl('chatInput');
+  const message = input.value.trim();
+  
+  if (!message) return;
+  
+  // Add user message to chat
+  addChatMessage('user', message);
+  input.value = '';
+  
+  // Show loading state
+  const loadingDiv = addChatMessage('assistant', 'Thinking...');
+  
+  try {
+    const serverUrl = getEl('serverUrl').value.trim() || window.location.origin;
+    
+    const response = await fetch(serverUrl + '/llm/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: 'You are a TypeScript and TanStack Query expert. Help the user refine or understand the generated code. Be concise and practical.' },
+          ...chatHistory,
+          { role: 'user', content: message }
+        ],
+        temperature: 0.7
+      })
+    });
+    
+    const data = await response.json();
+    
+    // Remove loading message
+    loadingDiv.remove();
+    
+    if (data.status === 'success' && data.result.message) {
+      addChatMessage('assistant', data.result.message);
+    } else {
+      addChatMessage('assistant', 'Sorry, I encountered an error processing your request.');
+    }
+  } catch (error) {
+    loadingDiv.remove();
+    addChatMessage('assistant', 'Error: ' + error.message);
+  }
+}
+
+function addChatMessage(role, content) {
+  const messagesDiv = getEl('chatMessages');
+  const messageDiv = document.createElement('div');
+  messageDiv.className = 'chat-message ' + role;
+  
+  const roleDiv = document.createElement('div');
+  roleDiv.className = 'role';
+  roleDiv.textContent = role;
+  
+  const contentDiv = document.createElement('div');
+  contentDiv.innerHTML = escapeHtml(content).replace(/\n/g, '<br>');
+  
+  messageDiv.appendChild(roleDiv);
+  messageDiv.appendChild(contentDiv);
+  messagesDiv.appendChild(messageDiv);
+  
+  // Add to history
+  chatHistory.push({ role, content });
+  
+  // Scroll to bottom
+  messagesDiv.scrollTop = messagesDiv.scrollHeight;
+  
+  return messageDiv;
+}
+
+function showChatInterface() {
+  getEl('chatSection').style.display = 'block';
+  getEl('chatSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+// Timeline functions
+function addTimelineStep(title, description, status = 'in-progress', meta = '') {
+  const step = {
+    id: Date.now(),
+    title,
+    description,
+    status,
+    meta,
+    timestamp: new Date()
+  };
+  processTimeline.push(step);
+  updateTimelineDisplay();
+  return step;
+}
+
+function updateTimelineStep(id, status, description = null, meta = null) {
+  const step = processTimeline.find(s => s.id === id);
+  if (step) {
+    step.status = status;
+    if (description) step.description = description;
+    if (meta) step.meta = meta;
+    updateTimelineDisplay();
+  }
+}
+
+function updateTimelineDisplay() {
+  const timelineEl = getEl('timeline');
+  if (!timelineEl) return;
+  
+  timelineEl.innerHTML = processTimeline.map(step => `
+    <div class="timeline-item ${step.status}">
+      <div class="timeline-content">
+        <div class="timeline-title">${escapeHtml(step.title)}</div>
+        <div class="timeline-description">${escapeHtml(step.description)}</div>
+        ${step.meta ? `<div class="timeline-meta">${escapeHtml(step.meta)}</div>` : ''}
+      </div>
+      <div class="timeline-status ${step.status}">${step.status}</div>
+    </div>
+  `).join('');
+}
+
+function showSummaryCards(data) {
+  const summaryGrid = getEl('summaryGrid');
+  if (!summaryGrid) return;
+  
+  const apiCapture = data.api_capture || {};
+  const agentResult = data.agent_result || {};
+  const files = agentResult.files_written || [];
+  
+  const cards = [
+    {
+      label: 'API Status',
+      value: apiCapture.success ? apiCapture.success.status : (apiCapture.error ? apiCapture.error.status : 'N/A'),
+      class: apiCapture.success ? 'success' : 'error'
+    },
+    {
+      label: 'Files Generated',
+      value: files.length,
+      class: 'highlight'
+    },
+    {
+      label: 'Total Size',
+      value: formatBytes(files.reduce((sum, f) => sum + (f.size || 0), 0)),
+      class: ''
+    },
+    {
+      label: 'Processing Time',
+      value: startTime ? `${((Date.now() - startTime) / 1000).toFixed(2)}s` : 'N/A',
+      class: ''
+    }
+  ];
+  
+  summaryGrid.innerHTML = cards.map(card => `
+    <div class="summary-card">
+      <div class="label">${card.label}</div>
+      <div class="value ${card.class}">${card.value}</div>
+    </div>
+  `).join('');
+  
+  summaryGrid.style.display = 'grid';
+}
+
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function showTimelineSection() {
+  getEl('timelineSection').style.display = 'block';
+  getEl('timelineSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function generate() {
+  const btn = getEl('generateBtn');
+  let serverUrl = getEl('serverUrl').value.trim();
+  if (!serverUrl) serverUrl = window.location.origin;
+  const targetPath = getEl('targetPath').value.trim();
+  const method = getEl('httpMethod').value;
+  let apiUrl = getEl('apiUrl').value.trim();
+  const body = getEl('requestBody').value.trim();
+  const auth = getEl('authHeader').value.trim();
+  const urlParams = getEl('urlParams').value.trim();
+
+  // Reset state
+  processTimeline = [];
+  startTime = Date.now();
+  getEl('timelineSection').style.display = 'none';
+  getEl('summaryGrid').style.display = 'none';
+
+  // Append URL params to the API URL
+  if (urlParams) {
+    const params = urlParams.split('\n')
+      .map(line => line.trim())
+      .filter(line => line.includes('='))
+      .map(line => {
+        const eq = line.indexOf('=');
+        const key = line.substring(0, eq).trim();
+        const val = line.substring(eq + 1).trim();
+        return key ? encodeURIComponent(key) + '=' + encodeURIComponent(val) : '';
+      })
+      .filter(p => p)
+      .join('&');
+    if (params) {
+      const separator = apiUrl.includes('?') ? '&' : '?';
+      apiUrl += separator + params;
+    }
+  }
+
+  // Clear previous results
+  getEl('status').innerHTML = '<div class="status-bar loading fade-in"><span class="status-dot"></span> Calling API &amp; generating...</div>';
+  getEl('captured').innerHTML = '';
+  getEl('results').innerHTML = '';
+  getEl('status').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  if (!serverUrl) { showToast('Enter server URL', 'error'); return; }
+  if (!targetPath) { showToast('Enter target directory', 'error'); return; }
+  if (!apiUrl) { showToast('Enter API URL', 'error'); return; }
+
+  btn.classList.add('loading');
+  btn.disabled = true;
+
+  // Start timeline
+  showTimelineSection();
+  const validationStep = addTimelineStep('Validating Input', 'Checking required fields and parameters', 'in-progress');
+  
+  // Simulate validation delay
+  await new Promise(resolve => setTimeout(resolve, 300));
+  updateTimelineStep(validationStep.id, 'completed', 'All required fields validated', `Method: ${method}, URL: ${apiUrl.substring(0, 50)}...`);
+
+  const payload = {
+    target_path: targetPath,
+    api_url: apiUrl,
+    http_method: method,
+    request_body: body || null,
+    auth_header: auth || null
+  };
+
+  try {
+    const apiCallStep = addTimelineStep('Calling External API', `Sending ${method} request to ${apiUrl}`, 'in-progress');
+    
+    const resp = await fetch(serverUrl + '/agents/ingest-api', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      updateTimelineStep(apiCallStep.id, 'error', 'API request failed', `HTTP ${resp.status}: ${data.detail || 'Unknown error'}`);
+      const err = data.detail || 'HTTP ' + resp.status;
+      getEl('status').innerHTML = '<div class="status-bar error fade-in"><span class="status-dot"></span> Request failed: ' + escapeHtml(err) + '</div>';
+      showToast('Failed', 'error');
+      btn.classList.remove('loading');
+      btn.disabled = false;
+      return;
+    }
+
+    updateTimelineStep(apiCallStep.id, 'completed', 'API call successful', `Status: ${resp.status}`);
+
+    const result = data.result;
+    const agentResult = result.agent_result || {};
+    const apiCapture = result.api_capture || {};
+    
+    // Store for chat functionality
+    currentApiCapture = apiCapture;
+    currentGeneratedCode = agentResult.raw_generated_code || '';
+
+    // Add API capture step
+    const captureStep = addTimelineStep('Capturing API Response', 'Analyzing success and error response structures', 'in-progress');
+    
+    if (apiCapture.success) {
+      updateTimelineStep(captureStep.id, 'completed', 'Response captured successfully', `Status: ${apiCapture.success.status}, Size: ${JSON.stringify(apiCapture.success.body).length} bytes`);
+    } else if (apiCapture.error) {
+      updateTimelineStep(captureStep.id, 'completed', 'Error response captured', `Status: ${apiCapture.error.status || 'network error'}`);
+    } else {
+      updateTimelineStep(captureStep.id, 'completed', 'No response captured', 'API may have failed');
+    }
+
+    // Add code generation step
+    const genStep = addTimelineStep('Generating Code', 'Creating TypeScript types, functions, and hooks', 'in-progress');
+    
+    // Status
+    const hasError = agentResult.error || agentResult.status === 'error';
+    getEl('status').innerHTML = '<div class="status-bar ' + (hasError ? 'error' : 'success') + ' fade-in">' +
+      '<span class="status-dot"></span> ' +
+      (hasError ? '&#10060; ' + escapeHtml(agentResult.error || 'Error') : '&#9989; Done! API captured &amp; code generated') +
+    '</div>';
+    
+    if (hasError) {
+      updateTimelineStep(genStep.id, 'error', 'Code generation failed', agentResult.error || 'Unknown error');
+    } else {
+      const files = agentResult.files_written || [];
+      updateTimelineStep(genStep.id, 'completed', 'Code generated successfully', `${files.length} files created, ${agentResult.module_name || 'unknown'} module`);
+      
+      // Add file writing step
+      const writeStep = addTimelineStep('Writing Files', `Writing ${files.length} files to ${targetPath}`, 'in-progress');
+      const verifiedCount = files.filter(f => f.verified || f.write_status === 'written' || f.write_status === 'success').length;
+      updateTimelineStep(writeStep.id, 'completed', 'Files written to disk', `${verifiedCount}/${files.length} files verified`);
+      
+      // Show summary cards
+      showSummaryCards(result);
+    }
+    
+    // Show chat interface if generation succeeded
+    if (!hasError) {
+      showChatInterface();
+    }
+
+    // Captured API structures
+    let capturedHtml = '';
+    if (apiCapture.success) {
+      capturedHtml += '<div class="capture-block fade-in"><div class="capture-header">&#9989; Success (' + apiCapture.success.status + ')<span class="tag success-tag">CAPTURED</span></div>' +
+        '<div class="capture-body">' + syntaxHighlight(JSON.stringify(apiCapture.success.body, null, 2)) + '</div></div>';
+    }
+    if (apiCapture.error) {
+      capturedHtml += '<div class="capture-block fade-in"><div class="capture-header">&#9888; Error (' + (apiCapture.error.status || 'network') + ')<span class="tag error-tag">CAPTURED</span></div>' +
+        '<div class="capture-body">' + syntaxHighlight(JSON.stringify(apiCapture.error.body, null, 2)) + '</div></div>';
+    }
+    if (capturedHtml) {
+      getEl('captured').innerHTML = capturedHtml;
+    }
+
+    // ── Format results ────────────────────────────────────────
+    const rawCode = agentResult.raw_generated_code || '';
+    const files = agentResult.files_written || [];
+    let html = '';
+
+    // Summary bar
+    const fileCount = files.filter(f => f.verified || f.write_status === 'written' || f.write_status === 'success').length;
+    html += '<div style="display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;" class="fade-in">' +
+      '<div style="width:36px;height:36px;border-radius:8px;background:' + (hasError ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)') + ';display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">' +
+        (hasError ? '&#10060;' : '&#9989;') + '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:14px;font-weight:600;">' + (hasError ? 'Generation failed' : 'Generation complete') + '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:2px;">' +
+          (fileCount > 0 ? fileCount + ' file(s) generated' : '') +
+          (apiCapture.success ? ' &middot; API success captured' : '') +
+          (apiCapture.error ? ' &middot; API error captured' : '') +
+        '</div></div>' +
+    '</div>';
+
+    // ── Generated files with full code ────────────────────────
+    // Parse file blocks from raw_generated_code for full content
+    const fileBlocks = [];
+    if (rawCode) {
+      const blockRegex = /\`\`\`(?:filepath:|file:)?([^\n]+?)\n([\s\S]*?)\`\`\`/g;
+      let match;
+      while ((match = blockRegex.exec(rawCode)) !== null) {
+        fileBlocks.push({ path: match[1].trim(), content: match[2].trim() });
+      }
+    }
+
+    if (fileBlocks.length > 0) {
+      html += '<div style="margin-bottom:14px;">' +
+        '<div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text);">&#128196; Generated Files</div>';
+      
+      let fileNum = 0;
+      for (const block of fileBlocks) {
+        fileNum++;
+        const fid = 'fc_' + fileNum;
+        const lang = block.path.endsWith('.ts') ? 'TypeScript' :
+                     block.path.endsWith('.tsx') ? 'TSX' :
+                     block.path.endsWith('.js') ? 'JavaScript' :
+                     block.path.endsWith('.css') ? 'CSS' :
+                     block.path.endsWith('.json') ? 'JSON' : 'code';
+        const fileMatch = files.find(f => block.path.endsWith(f.file));
+        const verified = fileMatch ? (fileMatch.verified || fileMatch.write_status === 'written' || fileMatch.write_status === 'success') : true;
+        html += '<div class="card fade-in" style="margin-bottom:10px;">' +
+          '<div class="card-header" style="cursor:pointer;" onclick="toggleFile(\'' + fid + '\')">' +
+            '<span style="width:20px;height:20px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;background:' + (verified ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)') + ';color:' + (verified ? 'var(--success)' : 'var(--error)') + ';flex-shrink:0;">' + (verified ? '&#10003;' : '&#10007;') + '</span>' +
+            '<span style="font-family:var(--mono);font-size:12px;">' + escapeHtml(block.path) + '</span>' +
+            '<span class="badge" style="margin-left:auto;">' + lang + '</span>' +
+          '</div>' +
+          '<div id="' + fid + '" class="card-body" style="padding:0;">' +
+            '<div style="position:relative;">' +
+              '<button onclick="copyText(document.getElementById(\'' + fid + 'code\').textContent)" style="position:absolute;top:8px;right:8px;background:var(--surface);border:1px solid var(--border);color:var(--text-muted);border-radius:4px;padding:4px 10px;cursor:pointer;font-size:10px;z-index:1;">Copy</button>' +
+              '<div id="' + fid + 'code" style="padding:14px;overflow-x:auto;font-family:var(--mono);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;max-height:500px;overflow-y:auto;">' + escapeHtml(block.content) + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }
+      html += '</div>';
+    }
+
+    // Fallback: show files from files_written if no file blocks were parsed
+    if (fileBlocks.length === 0 && files.length > 0) {
+      html += '<div style="margin-bottom:14px;">' +
+        '<div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text);">&#128196; Generated Files</div>';
+      for (const f of files) {
+        const ok = f.verified || f.write_status === 'written' || f.write_status === 'success';
+        const fid = 'ff_' + f.file.replace(/[^a-zA-Z0-9-_]/g, '_');
+        html += '<div class="card fade-in" style="margin-bottom:10px;">' +
+          '<div class="card-header" style="cursor:pointer;" onclick="toggleFile(\'' + fid + '\')">' +
+            '<span style="width:20px;height:20px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;background:' + (ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)') + ';color:' + (ok ? 'var(--success)' : 'var(--error)') + ';flex-shrink:0;">' + (ok ? '&#10003;' : '&#10007;') + '</span>' +
+            '<span style="font-family:var(--mono);font-size:12px;">' + escapeHtml(f.file) + '</span>' +
+            '<span class="badge" style="margin-left:auto;">' + (f.size ? f.size + ' B' : '') + '</span>' +
+          '</div>' +
+          '<div id="' + fid + '" class="card-body" style="padding:0;display:none;">' +
+            '<div id="' + fid + 'code" style="padding:14px;font-family:var(--mono);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;">' + escapeHtml(f.preview || '(empty)') + '</div>' +
+          '</div></div>';
+      }
+      html += '</div>';
+    }
+
+    // ── Captured API structures (collapsible) ──────────────────
+    if (apiCapture.success || apiCapture.error) {
+      html += '<div class="fade-in" style="margin-bottom:14px;">' +
+        '<div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text);">&#127760; Captured API Response</div>';
+      
+      if (apiCapture.success) {
+        html += '<div class="capture-block" style="margin-bottom:8px;">' +
+          '<div class="capture-header" style="cursor:pointer;" onclick="const el=this.nextElementSibling;el.style.display=el.style.display===\'none\'?\'block\':\'none\';">' +
+            '&#9989; Success (' + apiCapture.success.status + ')<span class="tag success-tag">CAPTURED</span></div>' +
+          '<div class="capture-body">' + syntaxHighlight(JSON.stringify(apiCapture.success.body, null, 2)) + '</div></div>';
+      }
+      if (apiCapture.error) {
+        html += '<div class="capture-block">' +
+          '<div class="capture-header" style="cursor:pointer;" onclick="const el=this.nextElementSibling;el.style.display=el.style.display===\'none\'?\'block\':\'none\';">' +
+            '&#9888; Error (' + (apiCapture.error.status || 'network') + ')<span class="tag error-tag">CAPTURED</span></div>' +
+          '<div class="capture-body">' + syntaxHighlight(JSON.stringify(apiCapture.error.body, null, 2)) + '</div></div>';
+      }
+      html += '</div>';
+    }
+
+    // ── Raw LLM output (collapsed) ────────────────────────────
+    if (rawCode) {
+      html += '<div class="fade-in">' +
+        '<div onclick="const e=document.getElementById(\'rawCode\');const a=this.querySelector(\'.arrow\');e.style.display=e.style.display===\'none\'?\'block\':\'none\';a.textContent=e.style.display===\'none\'?\'▶\':\'▼\';" style="font-size:12px;color:var(--text-muted);cursor:pointer;padding:6px 0;">' +
+          '<span class="arrow">&#9654;</span> Show raw LLM output</div>' +
+        '<div id="rawCode" style="display:none;" class="code-block">' +
+          '<div class="code-header">Raw Response<button onclick="copyText(document.getElementById(\'rawCodeText\').textContent)" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;">Copy</button></div>' +
+          '<div class="code-body" id="rawCodeText">' + escapeHtml(rawCode) + '</div></div></div>';
+    }
+
+    getEl('results').innerHTML = html;
+    showToast('Done!', hasError ? 'error' : 'success');
+
+  } catch (err) {
+    // Add error step to timeline
+    const errorStep = addTimelineStep('Network Error', 'Failed to connect to server', 'error', err.message);
+    
+    getEl('status').innerHTML = '<div class="status-bar error fade-in"><span class="status-dot"></span> Network error: ' + escapeHtml(err.message) + '</div>';
+    showToast('Network error', 'error');
+  } finally {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+    
+    // Add final completion step
+    if (processTimeline.length > 0 && !processTimeline.some(s => s.status === 'error')) {
+      addTimelineStep('Process Complete', 'All steps completed successfully', 'completed', `Total time: ${((Date.now() - startTime) / 1000).toFixed(2)}s`);
+    }
+  }
+}
+
+function toggleFile(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+</script>
+</body>
+</html>

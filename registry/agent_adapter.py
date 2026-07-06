@@ -51,7 +51,8 @@ class AgentAdapter(BaseAgent):
             "devops": ["deploy", "configure_ci", "monitor", "infrastructure"],
             "api": ["design_api", "implement_endpoints", "test_api", "document_api"],
             "flutter": ["create_flutter_components", "mobile_ui", "flutter_state"],
-            "react": ["create_react_components", "web_ui", "react_hooks", "state_management"]
+            "react": ["create_react_components", "web_ui", "react_hooks", "state_management"],
+            "tanstack": ["initialize_tanstack", "ingest_api", "generate_types", "generate_hooks", "generate_service", "query_key_factory", "cache_management"]
         }
         
         return capability_map.get(self.name, ["general"])

@@ -19,6 +19,7 @@ from .devops_agent import DevOpsAgent
 from .api_agent import APIAgent
 from .flutter_agent import FlutterAgent
 from .react_agent import ReactAgent
+from .tanstack_agent import TanStackAgent
 
 # New architecture imports
 from planner.planner import Planner
@@ -51,6 +52,7 @@ Available Agents:
 - API Agent: REST/GraphQL API design and development
 - Flutter Agent: Flutter and Dart development
 - React Agent: React and JavaScript/TypeScript development
+- TanStack Query Agent: TanStack Query v5+ hooks, TypeScript types, API service layer generation, query key factories, cache management
 
 Your Responsibilities:
 1. Analyze user requests to understand intent and complexity
@@ -68,6 +70,7 @@ Multi-Agent Coordination Examples:
 Decision Framework:
 - For UI/UX design tasks → Use UI Designer Agent first, then framework-specific agent
 - For framework-specific tasks (React, Flutter) → Use framework agent, potentially with UI Designer for design
+- For TanStack Query / TypeScript data fetching tasks → Use TanStack Query Agent
 - For code generation → Use Code Agent, potentially with framework agent for best practices
 - For documentation tasks → Use Docs Agent  
 - For memory retrieval/storage → Use Memory Agent
@@ -117,6 +120,7 @@ Always think step-by-step, coordinate agents effectively, and ensure the final r
         self.api_agent = APIAgent()
         self.flutter_agent = FlutterAgent()
         self.react_agent = ReactAgent()
+        self.tanstack_agent = TanStackAgent(tool_manager=self.tool_manager)
         
         # New Architecture Components
         self.shared_state = SharedState()
@@ -149,6 +153,7 @@ Always think step-by-step, coordinate agents effectively, and ensure the final r
             'api': self.api_agent,
             'flutter': self.flutter_agent,
             'react': self.react_agent,
+            'tanstack': self.tanstack_agent,
         }
     
     def run(self, user_input: str) -> Dict:
@@ -175,7 +180,7 @@ Respond in this exact JSON format:
   ]
 }}
 
-Available agents: code, memory, docs, planner, general, ui_designer, qa_tester, security_auditor, database_expert, devops, api, flutter, react
+Available agents: code, memory, docs, planner, general, ui_designer, qa_tester, security_auditor, database_expert, devops, api, flutter, react, tanstack
 
 For simple requests, use a single step. For complex requests, break into multiple steps using different agents.
 """
@@ -236,6 +241,15 @@ For simple requests, use a single step. For complex requests, break into multipl
                             task_data['code_context'] = context['code']
                     elif agent_name == 'general':
                         task_data['question'] = task_description
+                    elif agent_name == 'tanstack':
+                        task_data['requirements'] = task_description
+                        task_data['framework'] = context.get('framework', 'nextjs')
+                        if 'payload' in context:
+                            task_data['payload'] = context['payload']
+                        if 'api_endpoint' in context:
+                            task_data['api_endpoint'] = context['api_endpoint']
+                        if 'response_example' in context:
+                            task_data['response_example'] = context['response_example']
                     elif agent_name == 'react':
                         task_data['requirements'] = task_description
                         if 'ui_design' in context:
@@ -333,7 +347,8 @@ For simple requests, use a single step. For complex requests, break into multipl
             'devops': 'deploy',
             'api': 'design',
             'flutter': 'generate',
-            'react': 'generate'
+            'react': 'generate',
+            'tanstack': 'initialize'
         }
         
         # Check for review/optimization keywords
@@ -620,6 +635,10 @@ Provide the final product in a well-structured, ready-to-use format.
         self.agent_registry.register(
             AgentAdapter("react", self.react_agent),
             metadata={"type": "react", "description": "React development"}
+        )
+        self.agent_registry.register(
+            AgentAdapter("tanstack", self.tanstack_agent),
+            metadata={"type": "tanstack", "description": "TanStack Query v5+ hooks, TypeScript types, API service layer generation"}
         )
         
         self.logger.info("Manager", f"Registered {self.agent_registry.get_count()} agents to registry")

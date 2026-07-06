@@ -1686,6 +1686,186 @@ async def get_architecture_stats():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Ingest API Endpoint (One-click: capture + generate) ─────────────────
+
+class IngestAPIRequest(BaseModel):
+    """Request model for one-click API ingestion."""
+    target_path: str = Field(
+        ...,
+        description="Target directory path where generated files will be created",
+        example="D:/Projects/test-connections"
+    )
+    api_url: str = Field(
+        ...,
+        description="The real API endpoint URL to call and capture",
+        example="https://api.example.com/api/v1/products"
+    )
+    http_method: str = Field(
+        default="GET",
+        description="HTTP method (GET, POST, PUT, PATCH, DELETE)",
+        example="GET"
+    )
+    request_body: Optional[str] = Field(
+        default=None,
+        description="JSON request body to send to the API (for POST/PUT/PATCH)",
+        example='{"name": "Product A"}'
+    )
+    auth_header: Optional[str] = Field(
+        default=None,
+        description="Authorization header (e.g. Bearer token)",
+        example="Bearer eyJhbGciOiJIUzI1NiIs..."
+    )
+
+
+@app.post("/agents/ingest-api", response_model=SuccessResponse, tags=["Agents"], summary="One-click: call real API, capture response, generate types & hooks", responses={
+    200: {
+        "description": "API captured and types/hooks generated",
+        "content": {
+            "application/json": {
+                "example": {
+                    "status": "success",
+                    "result": {
+                        "api_capture": {
+                            "success_status": 200,
+                            "success_body": {"id": 1, "name": "Product A"},
+                            "error_status": 400,
+                            "error_body": {"message": "Validation error"}
+                        },
+                        "agent_result": {
+                            "status": "ingested",
+                            "files_written": []
+                        }
+                    }
+                }
+            }
+        }
+    }
+})
+async def ingest_api_one_click(request: IngestAPIRequest):
+    """One-click endpoint: calls the real API, captures success + error structures,
+    then feeds everything to the TanStack agent to generate types, functions, and hooks."""
+    import requests as http_requests
+    import json
+    
+    if not request.target_path:
+        raise HTTPException(status_code=400, detail="target_path is required")
+    if not request.api_url:
+        raise HTTPException(status_code=400, detail="api_url is required")
+    
+    # Step 1: Call the real API to capture success response
+    api_capture = {"success": None, "error": None}
+    
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if request.auth_header:
+        headers["Authorization"] = request.auth_header
+    
+    try:
+        # Parse request body if provided
+        body_data = None
+        if request.request_body:
+            try:
+                body_data = json.loads(request.request_body)
+            except json.JSONDecodeError:
+                body_data = request.request_body
+        
+        # Make the actual API call (requests library is in requirements.txt)
+        resp = http_requests.request(
+            method=request.http_method,
+            url=request.api_url,
+            headers=headers,
+            json=body_data if body_data else None,
+            timeout=15
+        )
+        
+        # Try to parse response as JSON
+        try:
+            resp_body = resp.json()
+        except Exception:
+            resp_body = resp.text
+        
+        if resp.ok:
+            api_capture["success"] = {
+                "status": resp.status_code,
+                "body": resp_body
+            }
+        else:
+            api_capture["error"] = {
+                "status": resp.status_code,
+                "body": resp_body
+            }
+    except Exception as e:
+        # API call failed entirely (network error, DNS, etc.)
+        api_capture["error"] = {
+            "status": 0,
+            "body": {"error": str(e)}
+        }
+    
+    # Step 2: Format response_example for the TanStack agent
+    success_str = json.dumps(api_capture["success"]["body"], indent=2) if api_capture["success"] else "{}"
+    error_str = json.dumps(api_capture["error"]["body"], indent=2) if api_capture["error"] else "{}"
+    
+    response_example = f"Success: {success_str}\n\nError: {error_str}"
+    
+    # Step 3: Build module name from URL (skip numeric segments and common prefixes)
+    path_parts = request.api_url.rstrip('/').split('/')
+    module_name = ''
+    skippable = {'api', 'v1', 'v2', 'v3', 'rest', 'public', 'private', 'api/v1', 'api/v2'}
+    for part in reversed(path_parts):
+        part_clean = part.replace('-', '_').replace(' ', '_')
+        if part and not part.startswith(':') and part_clean.lower() not in skippable and not part.isdigit():
+            module_name = part_clean
+            break
+    if not module_name:
+        module_name = 'Api'
+    # PascalCase the name
+    module_name = module_name.replace('_', ' ').title().replace(' ', '')
+    
+    # Step 4: Call the TanStack agent
+    task_data = {
+        'type': 'ingest_api',
+        'task': f'Create {module_name} API module',
+        'target_path': request.target_path,
+        'api_endpoint': f"{request.http_method} {request.api_url}",
+        'http_method': request.http_method,
+        'payload': request.request_body or '',
+        'response_example': response_example
+    }
+    
+    try:
+        agent_result = agent_manager.route_task('tanstack', task_data)
+    except Exception as e:
+        agent_result = {'error': str(e), 'status': 'error'}
+    
+    return {
+        "status": "success",
+        "result": {
+            "api_capture": {
+                "success": api_capture["success"],
+                "error": api_capture["error"],
+                "endpoint": request.api_url,
+                "method": request.http_method
+            },
+            "agent_result": agent_result
+        }
+    }
+
+
+# ── Serve the test UI directly from the server ───────────────────────
+@app.get("/test", tags=["Agents"], summary="Open API Ingestion Tool UI", include_in_schema=False)
+async def serve_test_ui():
+    """Serve the API Ingestion Tool HTML page."""
+    from fastapi.responses import HTMLResponse
+    import os
+    
+    html_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tests", "tanstack-tester.html")
+    try:
+        with open(html_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return HTMLResponse(content=content)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="UI file not found at tests/tanstack-tester.html")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

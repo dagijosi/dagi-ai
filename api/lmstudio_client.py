@@ -33,31 +33,41 @@ class LMStudioClient:
         Returns:
             Response dictionary with generated text
         """
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url}/chat"
+        
+        # Extract system prompt and user input from messages
+        system_prompt = ""
+        user_input_parts = []
+        for msg in messages:
+            role = msg.get('role', 'user')
+            content = msg.get('content', '')
+            if role == 'system':
+                system_prompt = content
+            else:
+                user_input_parts.append(f"{role}: {content}")
+        
+        user_input = "\n".join(user_input_parts) if user_input_parts else messages[-1].get('content', '') if messages else ''
         
         payload = {
             "model": self.model,
-            "messages": messages,
+            "input": user_input,
             "temperature": temperature,
             "stream": stream
         }
         
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
+        # Only add context_length if user explicitly provided a max_tokens value
+        # LM Studio's context_length controls total context (input + output), not just max output
+        if max_tokens is not None:
+            payload["context_length"] = max_tokens
+        
+        # Add system_prompt separately if present
+        if system_prompt:
+            payload["system_prompt"] = system_prompt
         
         response = self.session.post(url, json=payload)
         response.raise_for_status()
         
         return response.json()
-    
-    def _messages_to_prompt(self, messages: List[Dict]) -> str:
-        """Convert messages array to a single prompt string."""
-        prompt_parts = []
-        for msg in messages:
-            role = msg.get('role', 'user')
-            content = msg.get('content', '')
-            prompt_parts.append(f"{role}: {content}")
-        return "\n".join(prompt_parts)
     
     def chat_stream(
         self,
@@ -76,17 +86,34 @@ class LMStudioClient:
         Yields:
             Generated text chunks
         """
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url}/chat"
+        
+        # Extract system prompt and user input from messages
+        system_prompt = ""
+        user_input_parts = []
+        for msg in messages:
+            role = msg.get('role', 'user')
+            content = msg.get('content', '')
+            if role == 'system':
+                system_prompt = content
+            else:
+                user_input_parts.append(f"{role}: {content}")
+        
+        user_input = "\n".join(user_input_parts) if user_input_parts else messages[-1].get('content', '') if messages else ''
         
         payload = {
             "model": self.model,
-            "messages": messages,
+            "input": user_input,
             "temperature": temperature,
             "stream": True
         }
         
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
+        # Only add context_length if user explicitly provided a max_tokens value
+        if max_tokens is not None:
+            payload["context_length"] = max_tokens
+        
+        if system_prompt:
+            payload["system_prompt"] = system_prompt
         
         response = self.session.post(url, json=payload, stream=True)
         response.raise_for_status()
@@ -94,16 +121,20 @@ class LMStudioClient:
         for line in response.iter_lines():
             if line:
                 line = line.decode('utf-8')
+                # LM Studio native SSE format: event: message.delta / data: {...}
                 if line.startswith('data: '):
                     data = line[6:]
-                    if data == '[DONE]':
-                        break
                     try:
                         import json
                         chunk = json.loads(data)
-                        if 'choices' in chunk and len(chunk['choices']) > 0:
-                            delta = chunk['choices'][0].get('delta', {})
-                            content = delta.get('content', '')
+                        # Look for content in message.delta events
+                        if chunk.get('type') == 'message.delta':
+                            content = chunk.get('content', '')
+                            if content:
+                                yield content
+                        # Also handle OpenAI-compatible format as fallback
+                        elif chunk.get('choices'):
+                            content = chunk.get('choices', [{}])[0].get('delta', {}).get('content', '') or chunk.get('choices', [{}])[0].get('text', '')
                             if content:
                                 yield content
                     except json.JSONDecodeError:
@@ -220,10 +251,21 @@ def call_llm(messages: List[Dict], temperature: float = 0.7, max_tokens: Optiona
     client = get_lmstudio_client()
     response = client.chat(messages=messages, temperature=temperature, max_tokens=max_tokens)
     
-    # Extract content from response based on LM Studio API format
-    if 'choices' in response and len(response['choices']) > 0:
-        return response['choices'][0].get('message', {}).get('content', '')
-    elif 'content' in response:
+    # Extract content from response based on LM Studio native API format
+    # Response format: {"output": [{"type": "message", "content": "..."}, ...], ...}
+    output = response.get('output', [])
+    if output and isinstance(output, list):
+        content_parts = []
+        for item in output:
+            if isinstance(item, dict) and item.get('content'):
+                content_parts.append(item['content'])
+        if content_parts:
+            return '\n'.join(content_parts)
+    # Fallback: top-level content field
+    if 'content' in response:
         return response['content']
-    else:
-        return str(response)
+    # Fallback: OpenAI-compatible format
+    if 'choices' in response and len(response['choices']) > 0:
+        return response['choices'][0].get('message', {}).get('content', '') or response['choices'][0].get('text', '')
+    # Last resort: return string representation
+    return str(response)

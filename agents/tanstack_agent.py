@@ -31,24 +31,88 @@ class TanStackAgent:
         self.tool_manager = tool_manager
         self.memory_agent = memory_agent
         self._ensure_memory_agent()
+        self._memory_cache = {}  # Simple cache for memory search results
+        self._auto_analyze = False  # Opt-in for automatic analysis (default False for performance)
         self.system_prompt = """You are a TanStack Query (v5+) & TypeScript Generation Agent. Generate code following this architecture:
 
-ARCHITECTURE: src/connections/{Module}/function.ts + index.ts (PascalCase folders)
+ARCHITECTURE: src/connections/{Module}/function.ts + index.ts (PascalCase folders, singular names)
 - function.ts: Pure API calls via client.get<T>()/post<T>() etc. NO @tanstack/react-query imports
-- index.ts: TanStack Query hooks using ./function. Import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+- index.ts: TanStack Query hooks using ./function. Import { useQuery, useMutation, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
 - client.ts: SHARED client at src/connections/client.ts (common for all modules) with .get<T>(), .post<T>(), .put<T>(), .patch<T>(), .delete<T>()
-- Types: In src/types/ folder
+- Types: In src/types/ folder (centralized)
 - Query keys: Centralized in src/constants/queryKeys.ts with pattern keys.module.list(filters), .lists(), .detail(id)
 - Error: CustomError class with statusCode
-- Toast: premiumToast from ../../components/ui/feedback
+- Toast: premiumToast from ../../components/ui/feedback (ALWAYS use this for all success/error messages)
 - Store: Zustand stores from ../../store/
 - QueryClientProvider: In main app file (not separate provider)
 
-IMPORTANT: client.ts is a SHARED file at src/connections/client.ts. All modules import from this common client.
-Import path: import { client } from "../client" (from function.ts in src/connections/{Module}/)
+IMPORTANT RULES:
+1. client.ts is a SHARED file at src/connections/client.ts. All modules import from this common client.
+   Import path: import { client } from "../client" (from function.ts in src/connections/{Module}/)
 
-Hook naming: useXQuery (queries), useXMutation (mutations)
-Mutation pattern: onSuccess invalidates queries + premiumToast.success, onError premiumToast.error
+2. Hook naming: useXQuery (queries), useXMutation (mutations)
+
+3. Toast usage (MANDATORY for all mutations):
+   - Import: import { premiumToast } from "../../components/ui/feedback"
+   - Success: premiumToast.success("Success message")
+   - Error: premiumToast.error(error.message || "Fallback error message")
+   - Loading: premiumToast.loading("Loading message", progress)
+   - NEVER use console.log, console.error, or other toast libraries for user-facing messages
+
+4. Mutation pattern:
+   - onSuccess: invalidates queries + premiumToast.success("Success message")
+   - onError: premiumToast.error(error.message || "Error message")
+
+5. Query key pattern in src/constants/queryKeys.ts:
+   export const queryKeys = {
+     moduleName: {
+       list: (filters?: unknown) => ["moduleName", "list", filters] as const,
+       lists: () => ["moduleName", "list"] as const,
+       detail: (id: string) => ["module", id] as const,
+     },
+   }
+
+6. function.ts structure:
+   - Import types from ../../types (NOT inline)
+   - Import client from "../client"
+   - Helper functions for query params (buildQueryParams)
+   - JSDoc comments for each function
+   - NO @tanstack/react-query imports
+
+7. index.ts structure:
+   - Import { useQuery, useMutation, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
+   - Import { premiumToast } from "../../components/ui/feedback"
+   - Import functions from ./function
+   - Import queryKeys from "../../constants/queryKeys"
+   - Import CustomError from "../../utils/error"
+   - Import types from "../../types"
+
+8. Type handling:
+   - Always import types from centralized type files
+   - Use ApiResponse<T> wrapper for responses
+   - Use CustomError for error typing
+   - DO NOT define types inline in function.ts
+
+9. Client options:
+   - includeAuth: boolean
+   - isFormData: boolean (for file uploads)
+   - customHeaders: Record<string, string>
+   - errorMessage: string (for toast)
+   - params: Record<string, unknown>
+   - responseType: "json" | "blob" | "text"
+   - authType: "staff" | "storefront"
+
+10. Query invalidation:
+    - Use queryKeys.module.lists() for invalidating all list variants
+    - Use queryKeys.module.detail(id) for specific resource
+    - Call refreshNotifications(queryClient) after mutations where applicable
+
+11. File patterns:
+    - GET: build URLSearchParams for filters, append to URL
+    - POST/PUT/PATCH: include errorMessage option
+    - DELETE: include errorMessage option
+    - FormData: set isFormData: true
+    - Blob download: set responseType: "blob"
 
 OUTPUT FORMAT: Use ```filepath:path/to/file\ncode``` blocks. Each block = one file.""" 
     
@@ -56,6 +120,81 @@ OUTPUT FORMAT: Use ```filepath:path/to/file\ncode``` blocks. Each block = one fi
         """Execute a TanStack Query task."""
         self.status = "working"
         task_type = task_data.get('type')
+        
+        # Handle special task types for self-improvement
+        if task_type == 'analyze_improvements':
+            target_path = task_data.get('target_path') or task_data.get('path', '')
+            result = self.analyze_and_suggest_improvements(target_path)
+            self.status = "idle"
+            return result
+        
+        if task_type == 'apply_suggestion':
+            suggestion_id = task_data.get('suggestion_id', '')
+            approval = task_data.get('approval', False)
+            result = self.apply_suggestion(suggestion_id, approval)
+            self.status = "idle"
+            return result
+        
+        # Handle test operations
+        if task_type == 'check_packages':
+            target_path = task_data.get('target_path') or task_data.get('path', '')
+            result = self._check_required_packages(target_path)
+            self.status = "idle"
+            return {'status': 'checked', 'package_check': result}
+        
+        if task_type == 'set_auto_analyze':
+            enabled = task_data.get('enabled', False)
+            self._auto_analyze = enabled
+            self.status = "idle"
+            return {'status': 'success', 'success': True, 'auto_analyze': enabled}
+        
+        if task_type == 'test_cache':
+            query = task_data.get('query', '')
+            endpoint = task_data.get('endpoint', '')
+            # Test memory retrieval with caching
+            result = self._retrieve_memory_context(query, endpoint)
+            self.status = "idle"
+            return {'status': 'tested', 'cached': result != '', 'result': result}
+        
+        if task_type == 'clear_cache':
+            self._memory_cache = {}
+            self.status = "idle"
+            return {'status': 'success', 'success': True}
+        
+        if task_type == 'get_boilerplate':
+            template_type = task_data.get('template_type', 'customError')
+            
+            template = ''
+            if template_type == 'customError':
+                template = self._get_boilerplate_custom_error()
+            elif template_type == 'client':
+                template = self._get_boilerplate_client()
+            elif template_type == 'apiClient':
+                template = self._get_boilerplate_api_client()
+            elif template_type == 'premiumToast':
+                template = self._get_boilerplate_premium_toast()
+            elif template_type == 'premiumToastHelper':
+                template = self._get_boilerplate_premium_toast_helper()
+            
+            self.status = "idle"
+            return {'status': 'generated', 'template': template, 'type': template_type}
+        
+        if task_type == 'test_truncation':
+            instructions = task_data.get('instructions', '')
+            context_sections = task_data.get('context_sections', [])
+            max_length = task_data.get('max_length', 14000)
+            
+            result = self._build_prompt_with_truncation(instructions, context_sections, max_length)
+            
+            self.status = "idle"
+            return {
+                'status': 'tested',
+                'total_length': len(result),
+                'instructions_length': len(instructions),
+                'context_length': len(result) - len(instructions) - 2,  # Subtract newline
+                'instructions_preserved': instructions in result,
+                'result': result[:500] + '...' if len(result) > 500 else result
+            }
         
         try:
             if task_type == 'initialize':
@@ -82,6 +221,19 @@ OUTPUT FORMAT: Use ```filepath:path/to/file\ncode``` blocks. Each block = one fi
                     result = self._initialize_project(task_data)
             
             self.status = "idle"
+            
+            # Trigger automatic analysis after successful generations (only if opt-in)
+            if self._auto_analyze and result.get('status') in ['initialized', 'ingested', 'generated'] and self.memory_agent:
+                try:
+                    target_path = task_data.get('target_path') or task_data.get('path', '')
+                    # Store analysis result in result for user to review
+                    analysis = self.analyze_and_suggest_improvements(target_path)
+                    if analysis.get('status') == 'analyzed' and analysis.get('total_suggestions', 0) > 0:
+                        result['improvement_suggestions'] = analysis
+                except Exception:
+                    # Don't fail the main operation if analysis fails
+                    pass
+            
             return result
         except Exception as e:
             self.status = "error"
@@ -202,10 +354,6 @@ OUTPUT FORMAT: Use ```filepath:path/to/file\ncode``` blocks. Each block = one fi
                     content = '\n'.join(content_lines).strip()
                     if filepath and content:
                         blocks.append((filepath, content))
-                # Also check for ```ts or ```typescript with a sensible name
-                elif lang in ('ts', 'typescript', 'tsx', 'js', 'jsx'):
-                    # Try to infer filename from context - won't be perfect
-                    pass  # Skip fallback for now
         
         return blocks
     
@@ -231,19 +379,32 @@ OUTPUT FORMAT: Use ```filepath:path/to/file\ncode``` blocks. Each block = one fi
         
         # Create the shared client.ts
         client_content = """import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import { API_BASE_URL } from '../config/api.config';
 
 /**
  * Shared HTTP client for all API connections.
  * Provides typed methods for common HTTP operations with built-in error handling.
+ * 
+ * Base URL Configuration:
+ * - Set NEXT_PUBLIC_API_URL in your .env file (for Next.js/Vite)
+ * - Set VITE_API_URL in your .env file (for Vite)
+ * - Falls back to http://localhost:8000 if not set
+ * 
+ * Example .env file:
+ * NEXT_PUBLIC_API_URL=https://api.example.com
+ * or
+ * VITE_API_URL=https://api.example.com
  */
 class ApiClient {
   private client: AxiosInstance;
   private baseURL: string;
 
-  constructor(baseURL: string = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') {
-    this.baseURL = baseURL;
+  constructor() {
+    // Use the centralized config for base URL
+    this.baseURL = API_BASE_URL;
+    
     this.client = axios.create({
-      baseURL,
+      baseURL: this.baseURL,
       timeout: 30000,
       headers: {
         'Content-Type': 'application/json',
@@ -318,6 +479,21 @@ class ApiClient {
     const response = await this.client.delete<T>(url, config);
     return response.data;
   }
+  
+  /**
+   * Update the base URL dynamically (useful for multi-tenant apps)
+   */
+  setBaseURL(newBaseURL: string): void {
+    this.baseURL = newBaseURL;
+    this.client.defaults.baseURL = newBaseURL;
+  }
+  
+  /**
+   * Get the current base URL
+   */
+  getBaseURL(): string {
+    return this.baseURL;
+  }
 }
 
 // Export singleton instance
@@ -326,6 +502,45 @@ export const client = new ApiClient();
         
         # Write the client.ts file
         self._write_file(client_path, client_content)
+        
+        # Also create the config file
+        self._ensure_api_config(target_path)
+    
+    def _ensure_api_config(self, target_path: str):
+        """Ensure the API config file exists at src/config/api.config.ts."""
+        config_path = f"{target_path}/src/config/api.config.ts"
+        
+        # Check if config already exists
+        existing_content = self._read_file_content(config_path)
+        if existing_content:
+            return  # Already exists
+        
+        # Create the config file
+        config_content = """/**
+ * API Configuration
+ * Centralized configuration for API base URL and other API-related settings.
+ */
+
+// Support multiple env variable naming conventions
+export const API_BASE_URL = 
+  (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL) ||
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
+  'http://localhost:8000';
+
+// API timeout in milliseconds
+export const API_TIMEOUT = 30000;
+
+// API version (if applicable)
+export const API_VERSION = 'v1';
+
+// Default headers
+export const DEFAULT_HEADERS = {
+  'Content-Type': 'application/json',
+};
+"""
+        
+        # Write the config file
+        self._write_file(config_path, config_content)
 
     def _store_in_memory(self, task_type: str, task_data: Dict, result: Dict):
         """Store a generation result in memory for future learning."""
@@ -390,42 +605,44 @@ export const client = new ApiClient();
             pass
 
     def _retrieve_memory_context(self, task: str, endpoint: str = '') -> str:
-        """Retrieve relevant past memory context for a task."""
+        """Retrieve relevant past memory context for a task with caching."""
         if not self.memory_agent:
             return ''
+        
+        # Create cache key
+        cache_key = f"{task}_{endpoint}"
+        if cache_key in self._memory_cache:
+            return self._memory_cache[cache_key]
+        
         try:
             memories = []
             
-            # First search in api_patterns collection for similar endpoints
-            if endpoint:
-                api_results = self.memory_agent.search_memory(
-                    query=endpoint,
-                    collection='api_patterns',
-                    n_results=2
-                )
-                if api_results.get('status') == 'searched' and api_results.get('results'):
-                    for i, doc in enumerate(api_results['results']):
-                        meta = api_results['metadatas'][i] if i < len(api_results['metadatas']) else {}
-                        score = api_results['distances'][i] if i < len(api_results['distances']) else 0
-                        if score < 1.0:  # Only include very similar API patterns
-                            memories.append(f"- Similar API pattern: {meta.get('method', '')} {meta.get('endpoint', '')} (module: {meta.get('module_name', '')})")
-            
-            # Also search in general code collection
-            query = f"{task} {endpoint}"
+            # Combined single search for better performance
+            query = f"{task} {endpoint}".strip()
             code_results = self.memory_agent.search_memory(
                 query=query,
                 collection='code',
-                n_results=2
+                n_results=3
             )
+            
             if code_results.get('status') == 'searched' and code_results.get('results'):
                 for i, doc in enumerate(code_results['results']):
                     meta = code_results['metadatas'][i] if i < len(code_results['metadatas']) else {}
                     score = code_results['distances'][i] if i < len(code_results['distances']) else 0
                     if score < 1.5:  # Only include relevant memories
-                        memories.append(f"- Previous generation: {doc}")
+                        # Check if it's an API pattern
+                        if meta.get('endpoint'):
+                            memories.append(f"- Similar API pattern: {meta.get('method', '')} {meta.get('endpoint', '')} (module: {meta.get('module_name', '')})")
+                        else:
+                            memories.append(f"- Previous generation: {doc}")
             
+            result = ''
             if memories:
-                return 'From past work:\n' + '\n'.join(memories) + '\n'
+                result = 'From past work:\n' + '\n'.join(memories) + '\n'
+            
+            # Cache the result
+            self._memory_cache[cache_key] = result
+            return result
         except Exception:
             pass
         return ''
@@ -448,6 +665,219 @@ export const client = new ApiClient();
                 metadata={'agent': 'tanstack', 'context': context}
             )
             return {'status': 'stored', 'result': result}
+        except Exception as e:
+            return {'error': str(e), 'status': 'error'}
+    
+    def analyze_and_suggest_improvements(self, target_path: str = '') -> Dict:
+        """Analyze memory and suggest improvements while respecting core base immutability.
+        
+        This method:
+        1. Analyzes past generations and corrections from memory
+        2. Identifies patterns and potential improvements
+        3. Generates suggestions that DO NOT change the core Connection Structure Guide
+        4. Returns suggestions for user approval
+        
+        Core base (immutable):
+        - src/connections/{Module}/function.ts + index.ts structure
+        - Query key patterns
+        - Import patterns
+        - Client usage patterns
+        - Error handling patterns
+        
+        Suggested improvements (mutable):
+        - Specific file content optimizations
+        - Helper function additions
+        - Type definition refinements
+        - Hook pattern variations
+        - Query invalidation strategies
+        
+        Args:
+            target_path: Optional target directory to analyze
+        
+        Returns:
+            Dict with suggestions list and metadata
+        """
+        if not self.memory_agent:
+            return {'error': 'Memory agent not available', 'status': 'error'}
+        
+        suggestions = []
+        
+        try:
+            # Analyze corrections collection for patterns
+            corrections = self.memory_agent.search_memory(
+                query='correction improvement pattern',
+                collection='corrections',
+                n_results=10
+            )
+            
+            if corrections.get('status') == 'searched' and corrections.get('results'):
+                # Group corrections by context to find patterns
+                correction_patterns = {}
+                for i, doc in enumerate(corrections['results']):
+                    meta = corrections['metadatas'][i] if i < len(corrections['metadatas']) else {}
+                    context = meta.get('context', 'general')
+                    if context not in correction_patterns:
+                        correction_patterns[context] = []
+                    correction_patterns[context].append(doc)
+                
+                # Generate suggestions from patterns
+                for context, docs in correction_patterns.items():
+                    if len(docs) >= 2:  # Only suggest if pattern appears multiple times
+                        suggestions.append({
+                            'type': 'pattern_improvement',
+                            'context': context,
+                            'occurrences': len(docs),
+                            'suggestion': f"Multiple corrections detected for '{context}'. Consider standardizing this pattern.",
+                            'priority': 'medium',
+                            'affects_core': False
+                        })
+            
+            # Analyze API patterns for common structures
+            api_patterns = self.memory_agent.search_memory(
+                query='API endpoint module structure',
+                collection='api_patterns',
+                n_results=20
+            )
+            
+            if api_patterns.get('status') == 'searched' and api_patterns.get('results'):
+                # Check for inconsistent naming patterns
+                module_names = []
+                for i, meta in enumerate(api_patterns.get('metadatas', [])):
+                    module_name = meta.get('module_name', '')
+                    if module_name:
+                        module_names.append(module_name)
+                
+                # Check for naming inconsistencies
+                if module_names:
+                    singular_count = sum(1 for name in module_names if not name.endswith('s'))
+                    plural_count = sum(1 for name in module_names if name.endswith('s'))
+                    
+                    if singular_count > 0 and plural_count > 0:
+                        suggestions.append({
+                            'type': 'naming_consistency',
+                            'suggestion': f"Inconsistent module naming detected: {singular_count} singular, {plural_count} plural. Consider standardizing to singular names as per Connection Structure Guide.",
+                            'priority': 'low',
+                            'affects_core': False,
+                            'current_state': {'singular': singular_count, 'plural': plural_count}
+                        })
+            
+            # Analyze code collection for common patterns
+            code_patterns = self.memory_agent.search_memory(
+                query='function index hook query mutation',
+                collection='code',
+                n_results=15
+            )
+            
+            if code_patterns.get('status') == 'searched' and code_patterns.get('results'):
+                # Check for missing query keys
+                missing_keys_count = 0
+                for i, doc in enumerate(code_patterns['results']):
+                    if 'queryKeys' not in doc and 'query_keys' not in doc.lower():
+                        missing_keys_count += 1
+                
+                if missing_keys_count > 0:
+                    suggestions.append({
+                        'type': 'query_key_usage',
+                        'suggestion': f"{missing_keys_count} generations may not be using centralized queryKeys. Ensure all hooks use queryKeys from src/constants/queryKeys.ts",
+                        'priority': 'high',
+                        'affects_core': False
+                    })
+            
+            # Generate suggestions for target-specific improvements
+            if target_path:
+                existing_files = self._scan_existing_structure(target_path)
+                
+                # Check for missing queryKeys file
+                if 'src/constants/queryKeys.ts' not in existing_files:
+                    suggestions.append({
+                        'type': 'missing_file',
+                        'suggestion': "queryKeys.ts not found in src/constants/. Consider creating centralized query keys following the Connection Structure Guide pattern.",
+                        'priority': 'high',
+                        'affects_core': False,
+                        'file': 'src/constants/queryKeys.ts'
+                    })
+                
+                # Check for missing CustomError
+                has_custom_error = False
+                for filepath, content in existing_files.items():
+                    if 'CustomError' in content:
+                        has_custom_error = True
+                        break
+                
+                if not has_custom_error:
+                    suggestions.append({
+                        'type': 'missing_type',
+                        'suggestion': "CustomError class not found in existing files. Consider adding it to src/utils/error.ts following the Connection Structure Guide.",
+                        'priority': 'medium',
+                        'affects_core': False
+                    })
+            
+            return {
+                'status': 'analyzed',
+                'suggestions': suggestions,
+                'total_suggestions': len(suggestions),
+                'metadata': {
+                    'corrections_analyzed': len(corrections.get('results', [])) if corrections.get('results') else 0,
+                    'api_patterns_analyzed': len(api_patterns.get('results', [])) if api_patterns.get('results') else 0,
+                    'code_patterns_analyzed': len(code_patterns.get('results', [])) if code_patterns.get('results') else 0,
+                    'core_base_unchanged': True,
+                    'timestamp': str(__import__('datetime').datetime.now())
+                }
+            }
+            
+        except Exception as e:
+            return {'error': str(e), 'status': 'error'}
+    
+    def apply_suggestion(self, suggestion_id: str, approval: bool) -> Dict:
+        """Apply or decline a suggested improvement.
+        
+        This method:
+        1. Takes a suggestion ID and user approval decision
+        2. If approved: applies the change (only to mutable parts, never core base)
+        3. If declined: records the decline for future learning
+        4. Stores the decision in memory
+        
+        Args:
+            suggestion_id: ID of the suggestion to process
+            approval: True to apply, False to decline
+        
+        Returns:
+            Dict with status and details of the action taken
+        """
+        if not self.memory_agent:
+            return {'error': 'Memory agent not available', 'status': 'error'}
+        
+        try:
+            # Store the decision in memory
+            decision_content = f"Suggestion {suggestion_id}: {'APPROVED' if approval else 'DECLINED'}"
+            
+            self.memory_agent.save_memory(
+                content=decision_content,
+                collection='suggestion_decisions',
+                metadata={
+                    'suggestion_id': suggestion_id,
+                    'approved': approval,
+                    'timestamp': str(__import__('datetime').datetime.now())
+                }
+            )
+            
+            if approval:
+                # Apply the suggestion (implementation depends on suggestion type)
+                # This is a placeholder - actual implementation would be suggestion-specific
+                return {
+                    'status': 'approved',
+                    'suggestion_id': suggestion_id,
+                    'message': 'Suggestion approved. Implementation would be suggestion-specific.',
+                    'note': 'Core base remains unchanged as per immutability rule.'
+                }
+            else:
+                return {
+                    'status': 'declined',
+                    'suggestion_id': suggestion_id,
+                    'message': 'Suggestion declined. Decision recorded for learning.',
+                    'note': 'Decline pattern will be considered in future suggestions.'
+                }
+                
         except Exception as e:
             return {'error': str(e), 'status': 'error'}
 
@@ -473,6 +903,713 @@ export const client = new ApiClient();
             total_chars += len(snippet)
         
         return ''.join(summary_lines)
+    
+    def _build_prompt_with_truncation(self, instructions: str, context_sections: List[str], max_length: int = 14000) -> str:
+        """Build a prompt with smart truncation that preserves instructions.
+        
+        Args:
+            instructions: The core instructions/format block that must be preserved
+            context_sections: List of context sections (memory, existing files, etc.)
+            max_length: Maximum total prompt length
+        
+        Returns:
+            Truncated prompt with instructions preserved
+        """
+        # Reserve space for instructions
+        instructions_length = len(instructions)
+        context_budget = max_length - instructions_length - 100  # 100 char buffer
+        
+        if context_budget <= 0:
+            # Even instructions are too long, truncate them as fallback
+            return instructions[:max_length] + "\n\n[Instructions truncated due to length]"
+        
+        # Build context from sections, truncating if needed
+        context_parts = []
+        current_length = 0
+        
+        for section in context_sections:
+            if current_length + len(section) <= context_budget:
+                context_parts.append(section)
+                current_length += len(section)
+            else:
+                # Truncate this section to fit remaining budget
+                remaining = context_budget - current_length
+                if remaining > 50:  # Only add if we have meaningful space
+                    context_parts.append(section[:remaining] + "\n...[context truncated]")
+                break
+        
+        # Combine context and instructions
+        full_prompt = '\n'.join(context_parts) + '\n\n' + instructions
+        
+        return full_prompt
+    
+    def _get_boilerplate_custom_error(self) -> str:
+        """Get boilerplate CustomError class."""
+        return """export class CustomError extends Error {
+  statusCode: number;
+  errors?: Record<string, string[]>;
+
+  constructor(message: string, statusCode: number, errors?: Record<string, string[]>) {
+    super(message);
+    this.name = "CustomError";
+    this.statusCode = statusCode;
+    this.errors = errors;
+    Object.setPrototypeOf(this, CustomError.prototype);
+  }
+}"""
+    
+    def _get_boilerplate_client(self) -> str:
+        """Get boilerplate client.ts content."""
+        return """/**
+ * Lightweight, typed API client wrapper.
+ *
+ * Provides simple helpers around the project's API request utility.
+ * Includes standard HTTP methods (get, post, put, patch, delete, head)
+ */
+
+import { apiRequest, API_BASE_URL, getAuthHeader } from "../utils/apiClient";
+import type { ApiRequestConfig } from "../utils/apiClient";
+
+/**
+ * Configuration options for all client requests.
+ */
+export type RequestOptions = {
+  includeAuth?: boolean;
+  isFormData?: boolean;
+  customHeaders?: Record<string, string>;
+  redirect?: RequestRedirect;
+  errorMessage?: string;
+  params?: Record<string, unknown>;
+  responseType?: "json" | "blob" | "text";
+  authType?: "staff" | "storefront";
+};
+
+/**
+ * Helper to build consistent options for API requests.
+ */
+const buildOptions = (
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD",
+  data?: unknown,
+  opts?: RequestOptions,
+): ApiRequestConfig => ({
+  method,
+  data,
+  includeAuth: opts?.includeAuth,
+  isFormData: opts?.isFormData,
+  customHeaders: opts?.customHeaders,
+  redirect: opts?.redirect,
+  errorMessage: opts?.errorMessage,
+  params: opts?.params,
+  responseType: opts?.responseType,
+  authType: opts?.authType,
+});
+
+/**
+ * Main API client instance.
+ */
+export const client = {
+  get: async <T>(url: string, opts?: RequestOptions) =>
+    apiRequest<T>(url, buildOptions("GET", undefined, opts)),
+
+  post: async <TResponse, TData = unknown>(
+    url: string,
+    data?: TData,
+    opts?: RequestOptions,
+  ) => 
+    apiRequest<TResponse>(url, buildOptions("POST", data, opts)),
+
+  put: async <TResponse, TData = unknown>(
+    url: string,
+    data?: TData,
+    opts?: RequestOptions,
+  ) => 
+    apiRequest<TResponse>(url, buildOptions("PUT", data, opts)),
+
+  patch: async <TResponse, TData = unknown>(
+    url: string,
+    data?: TData,
+    opts?: RequestOptions,
+  ) => 
+    apiRequest<TResponse>(url, buildOptions("PATCH", data, opts)),
+
+  delete: async <TResponse, TData = unknown>(
+    url: string,
+    data?: TData,
+    opts?: RequestOptions,
+  ) => 
+    apiRequest<TResponse>(url, buildOptions("DELETE", data, opts)),
+
+  head: async <T>(url: string, opts?: RequestOptions) =>
+    apiRequest<T>(url, buildOptions("HEAD", undefined, opts)),
+};
+
+export default client;"""
+    
+    def _get_boilerplate_api_client(self) -> str:
+        """Get boilerplate apiClient.ts content."""
+        return """/**
+ * Core API request utility.
+ * Handles fetch requests, error handling, and authentication.
+ */
+
+export interface ApiRequestConfig {
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
+  data?: unknown;
+  includeAuth?: boolean;
+  isFormData?: boolean;
+  customHeaders?: Record<string, string>;
+  redirect?: RequestRedirect;
+  errorMessage?: string;
+  params?: Record<string, unknown>;
+  responseType?: "json" | "blob" | "text";
+  authType?: "staff" | "storefront";
+}
+
+/**
+ * Base API URL - configure for your environment.
+ */
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+/**
+ * Gets the current authorization header.
+ * Implement based on your auth storage mechanism.
+ */
+export const getAuthHeader = (): string => {
+  const token = typeof window !== "undefined" 
+    ? localStorage.getItem("authToken") 
+    : null;
+  return token ? `Bearer ${token}` : "";
+};
+
+/**
+ * Core API request function.
+ */
+export async function apiRequest<T>(
+  url: string,
+  config: ApiRequestConfig,
+): Promise<T> {
+  const {
+    method,
+    data,
+    includeAuth = false,
+    isFormData = false,
+    customHeaders = {},
+    redirect,
+    errorMessage,
+    params,
+    responseType = "json",
+  } = config;
+
+  // Build URL with query params
+  let finalUrl = url.startsWith("http") ? url : `${API_BASE_URL}${url}`;
+  if (params) {
+    const searchParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) {
+        searchParams.append(key, String(value));
+      }
+    });
+    const queryString = searchParams.toString();
+    if (queryString) {
+      finalUrl += `?${queryString}`;
+    }
+  }
+
+  // Build headers
+  const headers: Record<string, string> = {
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
+    ...customHeaders,
+  };
+
+  if (includeAuth) {
+    headers["Authorization"] = getAuthHeader();
+  }
+
+  // Build request options
+  const options: RequestInit = {
+    method,
+    headers,
+    redirect,
+    body: data 
+      ? isFormData 
+        ? data as FormData 
+        : JSON.stringify(data)
+      : undefined,
+  };
+
+  try {
+    const response = await fetch(finalUrl, options);
+
+    // Handle response based on type
+    if (responseType === "blob") {
+      if (!response.ok) {
+        throw new Error(errorMessage || "Request failed");
+      }
+      return (await response.blob()) as T;
+    }
+
+    if (responseType === "text") {
+      if (!response.ok) {
+        throw new Error(errorMessage || "Request failed");
+      }
+      return (await response.text()) as T;
+    }
+
+    // JSON response
+    const jsonData = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        jsonData?.message || errorMessage || "Request failed"
+      );
+    }
+
+    return jsonData as T;
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error(errorMessage || "An unexpected error occurred");
+  }
+}"""
+    
+    def _get_boilerplate_premium_toast(self) -> str:
+        """Get boilerplate PremiumToast.tsx content."""
+        return """import React from 'react';
+import { toast } from 'sonner';
+import { 
+  FaCheckCircle, 
+  FaExclamationCircle, 
+  FaInfoCircle, 
+  FaTimes,
+  FaCloudUploadAlt,
+  FaCog,
+  FaSpinner
+} from 'react-icons/fa';
+
+export type ToastType = 'success' | 'error' | 'info' | 'warning' | 'upload' | 'update' | 'message' | 'loading';
+
+interface PremiumToastProps {
+  onClose: () => void;
+  type: ToastType;
+  title: string;
+  description?: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  avatar?: string;
+  progress?: number;
+  version?: string;
+}
+
+const PremiumToast: React.FC<PremiumToastProps> = ({
+  onClose,
+  type,
+  title,
+  description,
+  actionLabel,
+  onAction,
+  avatar,
+  progress,
+  version,
+}) => {
+  const dismiss = React.useCallback(() => {
+    onClose();
+    setTimeout(() => {
+      toast.dismiss();
+    }, 0);
+  }, [onClose]);
+
+  const handleAction = () => {
+    if (onAction) {
+      onAction();
+    }
+    dismiss();
+  };
+
+  const renderIcon = () => {
+    switch (type) {
+      case 'success':
+        return (
+          <div className="bg-green-500 w-7 h-7 rounded-full flex items-center justify-center shadow-lg shadow-green-500/20">
+            <FaCheckCircle className="text-white text-base" />
+          </div>
+        );
+      case 'error':
+        return (
+          <div className="bg-red-500 w-7 h-7 rounded-lg flex items-center justify-center shadow-lg shadow-red-500/20 transform rotate-45">
+            <FaExclamationCircle className="text-white text-base transform -rotate-45" />
+          </div>
+        );
+      case 'info':
+        return (
+          <div className="bg-blue-500 w-7 h-7 rounded-full flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <FaInfoCircle className="text-white text-base" />
+          </div>
+        );
+      case 'warning':
+        return (
+          <div className="bg-amber-500 w-7 h-7 rounded-full flex items-center justify-center shadow-lg shadow-amber-500/20">
+            <FaExclamationCircle className="text-white text-base" />
+          </div>
+        );
+      case 'upload':
+        return (
+          <div className="bg-blue-500/10 p-2.5 rounded-xl border border-blue-500/20 text-blue-500">
+            <FaCloudUploadAlt className="text-xl" />
+          </div>
+        );
+      case 'update':
+        return (
+          <div className="bg-gray-900/5 p-2.5 rounded-xl border border-gray-200 text-blue-500">
+            <FaCog className="text-xl animate-spin" style={{ animationDuration: '8s' }} />
+          </div>
+        );
+      case 'loading':
+        return (
+          <div className="bg-blue-500/10 p-2.5 rounded-xl border border-blue-500/20 text-blue-500">
+            <FaSpinner className="text-xl animate-spin" />
+          </div>
+        );
+      case 'message':
+        return (
+          <div className="relative">
+            <div className="w-11 h-11 rounded-full overflow-hidden border-2 border-white shadow-sm bg-gray-200/20">
+              <img src={avatar || "https://i.pravatar.cc/150"} alt="" className="w-full h-full object-cover" />
+            </div>
+            <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const isDarkAction = type === 'error' || type === 'warning';
+
+  return (
+    <div 
+      className="bg-white/95 backdrop-blur-xl text-gray-900 p-3.5 rounded-2xl shadow-2xl flex flex-col gap-3 min-w-[320px] max-w-[420px] border border-gray-200 animate-in fade-in slide-in-from-bottom-4 duration-300 pointer-events-auto select-none"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-start justify-between gap-3.5">
+        <div className="flex items-center gap-3.5 flex-1 min-w-0">
+          <div className="flex-shrink-0">
+            {renderIcon()}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold text-sm text-gray-900 leading-tight break-words">{title}</h3>
+              {version && <span className="text-gray-900/40 text-[10px] font-mono whitespace-nowrap">| {version}</span>}
+            </div>
+            {description && (
+              <p className="text-gray-900/60 text-xs mt-0.5 italic leading-relaxed break-words">
+                {description}
+              </p>
+            )}
+          </div>
+        </div>
+        <button 
+          type="button"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dismiss();
+          }} 
+          className="text-gray-900/30 hover:text-gray-900 transition-colors flex-shrink-0 p-1.5 -m-1.5 cursor-pointer relative z-50"
+        >
+          <FaTimes size={14} />
+        </button>
+      </div>
+
+      {(type === 'upload' || type === 'loading') && typeof progress === 'number' && (
+        <div className="space-y-1.5 px-0.5">
+          <div className="h-1.5 w-full bg-gray-200/30 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-blue-500 rounded-full transition-all duration-500" 
+              style={{ width: `${progress}%` }}
+            ></div>
+          </div>
+          <div className="flex justify-end">
+            <span className="text-[10px] font-bold text-gray-900/40">{progress}%</span>
+          </div>
+        </div>
+      )}
+
+      {(actionLabel || type === 'message' || type === 'update' || type === 'upload' || type === 'loading') && (
+        <div className={`flex items-center gap-2.5 ${type === 'message' ? 'ml-14' : (type === 'update' || type === 'upload' || type === 'loading') ? 'ml-[52px]' : ''}`}>
+          <button 
+            type="button"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              dismiss();
+            }}
+            className="px-3.5 py-1.5 text-gray-900/70 hover:bg-gray-900/5 rounded-xl text-[11px] font-bold border border-gray-200 transition-all whitespace-nowrap cursor-pointer relative z-50"
+          >
+            {type === 'update' ? 'Skip' : type === 'upload' ? 'Cancel' : 'Dismiss'}
+          </button>
+          <button 
+            type="button"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleAction();
+            }}
+            className={`px-4 py-1.5 rounded-xl text-[11px] font-bold transition-all whitespace-nowrap shadow-sm cursor-pointer relative z-50 ${
+              isDarkAction 
+                ? 'bg-gray-900 text-gray-100 hover:opacity-90' 
+                : 'bg-blue-500 text-white hover:opacity-90'
+            }`}
+          >
+            {actionLabel || (type === 'message' ? 'Reply' : type === 'update' ? 'Install' : type === 'upload' ? 'Retry' : 'Confirm')}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default PremiumToast;"""
+    
+    def _get_boilerplate_premium_toast_helper(self) -> str:
+        """Get boilerplate premiumToast helper file content."""
+        return """import { toast } from 'sonner';
+import PremiumToast, {type ToastType } from './PremiumToast';
+
+interface PremiumToastOptions {
+  description?: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  avatar?: string;
+  progress?: number;
+  version?: string;
+  duration?: number;
+  id?: string | number;
+  simulateProgress?: boolean;
+}
+
+export const premiumToast = (type: ToastType, title: string, options: PremiumToastOptions = {}) => {
+  const toastId = options.id || Math.random().toString(36).substring(2, 9);
+
+  return toast.custom((t) => (
+    <PremiumToast 
+      onClose={() => toast.dismiss(t)}
+      type={type}
+      title={title}
+      description={options.description}
+      actionLabel={options.actionLabel}
+      onAction={options.onAction}
+      avatar={options.avatar}
+      progress={options.progress}
+      version={options.version}
+    />
+  ), {
+    duration: options.duration || 5000,
+    id: toastId
+  });
+};
+
+premiumToast.success = (title: string, options?: PremiumToastOptions) => premiumToast('success', title, options);
+premiumToast.error = (title: string, options?: PremiumToastOptions) => premiumToast('error', title, options);
+premiumToast.info = (title: string, options?: PremiumToastOptions) => premiumToast('info', title, options);
+premiumToast.warning = (title: string, options?: PremiumToastOptions) => premiumToast('warning', title, options);
+premiumToast.loading = (title: string, progress?: number, options?: PremiumToastOptions) => premiumToast('loading', title, { ...options, progress });
+premiumToast.upload = (title: string, progress: number, options?: PremiumToastOptions) => premiumToast('upload', title, { ...options, progress });
+premiumToast.update = (title: string, version: string, options?: PremiumToastOptions) => premiumToast('update', title, { ...options, version });
+premiumToast.message = (title: string, description: string, avatar: string, options?: PremiumToastOptions) => 
+  premiumToast('message', title, { ...options, description, avatar });
+
+premiumToast.dismiss = (id?: string | number) => toast.dismiss(id);
+
+premiumToast.promise = async <T,>(
+  promiseOrFn: Promise<T> | ((setProgress: (p: number) => void) => Promise<T>),
+  msgs: {
+    loading: string;
+    success: string | ((data: T) => string);
+    error: string | ((error: Error | unknown) => string);
+  },
+  options: Omit<PremiumToastOptions, 'id'> = {}
+) => {
+  const id = Math.random().toString(36).substring(2, 9);
+  let interval: any = null;
+  
+  const setProgress = (progress: number) => {
+    premiumToast.loading(msgs.loading, progress, { ...options, id });
+  };
+
+  if (options.simulateProgress) {
+    let currentProgress = 0;
+    interval = setInterval(() => {
+      currentProgress += Math.floor(Math.random() * 15) + 5;
+      if (currentProgress >= 95) {
+        if (interval) clearInterval(interval);
+      } else {
+        setProgress(currentProgress);
+      }
+    }, 400);
+  } else {
+    premiumToast.loading(msgs.loading, options.progress, { ...options, id });
+  }
+
+  try {
+    const result = await (typeof promiseOrFn === 'function' ? promiseOrFn(setProgress) : promiseOrFn);
+    
+    if (interval) clearInterval(interval);
+    
+    const successMsg = typeof msgs.success === 'function' ? msgs.success(result) : msgs.success;
+    premiumToast.success(successMsg, { ...options, id });
+    
+    return result;
+  } catch (error) {
+    if (interval) clearInterval(interval);
+    
+    const errorMsg = typeof msgs.error === 'function' ? msgs.error(error as Error) : msgs.error;
+    premiumToast.error(errorMsg, { ...options, id });
+    
+    throw error;
+  }
+};"""
+    
+    def _write_boilerplate_if_missing(self, target_path: str, file_path: str, content: str) -> bool:
+        """Write boilerplate file if it doesn't exist."""
+        full_path = self._resolve_path(target_path, file_path)
+        existing = self._read_file_content(full_path)
+        if not existing:
+            self._write_file(full_path, content)
+            return True
+        return False
+    
+    def _check_required_packages(self, target_path: str) -> Dict:
+        """Check if required TanStack packages are installed in package.json.
+        
+        Returns dict with package flags and warnings.
+        """
+        result = {
+            'has_react_query': False,
+            'has_eslint_plugin': False,
+            'has_sonner': False,
+            'has_react_icons': False,
+            'warnings': []
+        }
+        
+        package_json_path = self._resolve_path(target_path, 'package.json')
+        content = self._read_file_content(package_json_path)
+        
+        if not content:
+            result['warnings'].append('package.json not found - cannot verify dependencies')
+            return result
+        
+        try:
+            import json
+            package_data = json.loads(content)
+            
+            dependencies = package_data.get('dependencies', {})
+            dev_dependencies = package_data.get('devDependencies', {})
+            
+            # Check for @tanstack/react-query
+            if '@tanstack/react-query' in dependencies:
+                result['has_react_query'] = True
+            else:
+                result['warnings'].append('Missing @tanstack/react-query in dependencies. Run: npm i @tanstack/react-query')
+            
+            # Check for @tanstack/eslint-plugin-query
+            if '@tanstack/eslint-plugin-query' in dev_dependencies:
+                result['has_eslint_plugin'] = True
+            else:
+                result['warnings'].append('Missing @tanstack/eslint-plugin-query in devDependencies. Run: npm i -D @tanstack/eslint-plugin-query')
+            
+            # Check for sonner (toast library)
+            if 'sonner' in dependencies:
+                result['has_sonner'] = True
+            else:
+                result['warnings'].append('Missing sonner in dependencies. Run: npm i sonner')
+            
+            # Check for react-icons
+            if 'react-icons' in dependencies:
+                result['has_react_icons'] = True
+            else:
+                result['warnings'].append('Missing react-icons in dependencies. Run: npm i react-icons')
+                
+        except Exception as e:
+            result['warnings'].append(f'Error parsing package.json: {str(e)}')
+        
+        return result
+    
+    def _verify_imports(self, target_path: str, generated_files: List[Dict]) -> Dict:
+        """Verify that imports in generated files reference existing files.
+        
+        Returns dict with 'valid_imports', 'missing_imports', and 'warnings'.
+        """
+        result = {
+            'valid_imports': [],
+            'missing_imports': [],
+            'warnings': []
+        }
+        
+        import re
+        
+        for file_info in generated_files:
+            file_path = file_info.get('file', '')
+            if not file_path or file_info.get('boilerplate'):
+                continue
+            
+            full_path = self._resolve_path(target_path, file_path)
+            content = self._read_file_content(full_path)
+            
+            if not content:
+                continue
+            
+            # Extract import statements
+            # Pattern: import ... from "..." or import ... from '...'
+            import_pattern = r'import\s+(?:{[^}]+}|\*\s+as\s+\w+|\w+(?:\s*,\s*\w+)*)\s+from\s+["\']([^"\']+)["\']'
+            matches = re.findall(import_pattern, content)
+            
+            for import_path in matches:
+                # Skip external packages (node_modules)
+                if import_path.startswith('@') or not import_path.startswith('.'):
+                    continue
+                
+                # Resolve relative import to absolute path
+                # Import is relative to the file's directory
+                file_dir = full_path.rsplit('/', 1)[0] if '/' in full_path else target_path
+                
+                # Handle relative paths
+                if import_path.startswith('./'):
+                    resolved = file_dir + '/' + import_path[2:]
+                elif import_path.startswith('../'):
+                    parts = import_path.split('..')
+                    resolved = file_dir
+                    for _ in range(len(parts) - 1):
+                        resolved = resolved.rsplit('/', 1)[0] if '/' in resolved else resolved
+                    remaining = parts[-1].lstrip('/')
+                    if remaining:
+                        resolved += '/' + remaining
+                else:
+                    resolved = file_dir + '/' + import_path
+                
+                # Add .ts extension if missing
+                if not resolved.endswith('.ts') and not resolved.endswith('.tsx'):
+                    resolved += '.ts'
+                
+                # Check if file exists
+                resolved_full = self._resolve_path(target_path, resolved)
+                exists = self._read_file_content(resolved_full) is not None
+                
+                if exists:
+                    result['valid_imports'].append({
+                        'file': file_path,
+                        'import': import_path,
+                        'resolved': resolved
+                    })
+                else:
+                    result['missing_imports'].append({
+                        'file': file_path,
+                        'import': import_path,
+                        'resolved': resolved
+                    })
+                    result['warnings'].append(f"Missing import target: {import_path} in {file_path} (resolved to {resolved})")
+        
+        return result
     
     def _scan_existing_structure(self, target_path: str) -> Dict[str, str]:
         """Scan the target directory for existing project files.
@@ -547,7 +1684,9 @@ export const client = new ApiClient();
         - `./types/index.ts` (dot-relative path)
         - `path/to/types/index.ts` (path/to/ prefix)
         """
+        import sys
         path = raw_path.replace('\\', '/').strip()
+        original_path = path
         
         # Remove leading ./ or .\
         if path.startswith('./'):
@@ -565,13 +1704,21 @@ export const client = new ApiClient();
             idx = path.find(target_normalized)
             relative = path[idx + len(target_normalized):].lstrip('/')
             if relative:
+                if original_path != relative:
+                    print(f"[TanStackAgent] Sanitized path: {original_path} -> {relative}", file=sys.stderr)
                 return relative
         
         # If it's become an absolute Windows path after stripping, try to make it relative
         # e.g. if `path/to/` is stripped and we're left with `D:/Projects/...`
         if ':' in path or path.startswith('/'):
             # It's still an absolute path, return just the filename as fallback
-            return path.split('/')[-1] if '/' in path else path
+            filename = path.split('/')[-1] if '/' in path else path
+            if original_path != filename:
+                print(f"[TanStackAgent] Fallback to filename: {original_path} -> {filename}", file=sys.stderr)
+            return filename
+        
+        if original_path != path:
+            print(f"[TanStackAgent] Path sanitized: {original_path} -> {path}", file=sys.stderr)
         
         return path
     
@@ -637,8 +1784,10 @@ export const client = new ApiClient();
         # Check if target exists and scan existing files
         target_exists = self._check_directory_exists(target_path)
         existing_files = {}
+        package_check = {}
         if target_exists:
             existing_files = self._scan_existing_structure(target_path)
+            package_check = self._check_required_packages(target_path)
         
         context_summary = self._build_context_summary(target_path, existing_files)
         
@@ -646,34 +1795,38 @@ export const client = new ApiClient();
         memory_context = self._retrieve_memory_context(task)
         
         # ── Step 1: Generate the project structure ──
-        prompt = (
+        # Build context sections
+        context_sections = []
+        
+        base_context = (
             f"Initialize a TanStack Query project structure for: {task}\n\n"
             f"Target directory: {target_path}\n"
             f"Framework: {framework}\n\n"
         )
+        context_sections.append(base_context)
         
         if memory_context:
-            prompt += f"\n{memory_context}\n"
+            context_sections.append(memory_context)
         
         if existing_files:
-            prompt += f"The target directory already exists. Here are the existing files:\n{context_summary}\n\n"
-            prompt += "Generate files that integrate with the existing project. Add or update files as needed.\n"
+            context_sections.append(f"The target directory already exists. Here are the existing files:\n{context_summary}\n\nGenerate files that integrate with the existing project. Add or update files as needed.\n")
         else:
-            prompt += "The target directory does not exist yet (or is empty). Create a fresh project structure.\n"
+            context_sections.append("The target directory does not exist yet (or is empty). Create a fresh project structure.\n")
         
         if 'next' in framework.lower():
-            prompt += (
+            context_sections.append(
                 "\n- Use 'use client' directive for App Router components\n"
                 "- Create files under app/ or src/ based on project convention\n"
                 "- Provide a TanStack Query Provider wrapper for the layout\n"
             )
         elif 'react' in framework.lower():
-            prompt += (
+            context_sections.append(
                 "\n- Standard React SPA structure\n"
                 "- Wrap app with QueryClientProvider in index.tsx or App.tsx\n"
             )
         
-        prompt += """
+        # Instructions that must be preserved
+        instructions = """
 Generate the following files using the `filepath:` format:
 
 - src/connections/client.ts: Shared API client with .get<T>(), .post<T>(), etc.
@@ -688,9 +1841,8 @@ Use this format:
 ```
 """
         
-        # Truncate prompt if too long for 8k context (~7000 chars for user, rest for system + output)
-        if len(prompt) > 14000:
-            prompt = prompt[:14000] + "\n\n[Prompt truncated due to length]"
+        # Build prompt with smart truncation
+        prompt = self._build_prompt_with_truncation(instructions, context_sections)
         
         messages = [
             {"role": "system", "content": self.system_prompt},
@@ -702,6 +1854,42 @@ Use this format:
         # ── Step 2: Write files to disk ──
         written_files = self._write_generated_files(target_path, generated)
         
+        # ── Step 3: Write boilerplate files if missing (avoid LLM regeneration) ──
+        boilerplate_written = []
+        
+        # Write apiClient.ts if missing (boilerplate - same across all projects)
+        if self._write_boilerplate_if_missing(target_path, 'src/utils/apiClient.ts', self._get_boilerplate_api_client()):
+            boilerplate_written.append('src/utils/apiClient.ts')
+        
+        # Write CustomError if missing (boilerplate - same across all projects)
+        if self._write_boilerplate_if_missing(target_path, 'src/utils/error.ts', self._get_boilerplate_custom_error()):
+            boilerplate_written.append('src/utils/error.ts')
+        
+        # Write PremiumToast component if missing (boilerplate - same across all projects)
+        if self._write_boilerplate_if_missing(target_path, 'src/components/ui/feedback/PremiumToast.tsx', self._get_boilerplate_premium_toast()):
+            boilerplate_written.append('src/components/ui/feedback/PremiumToast.tsx')
+        
+        # Write premiumToast helper if missing (boilerplate - same across all projects)
+        if self._write_boilerplate_if_missing(target_path, 'src/components/ui/feedback/index.ts', self._get_boilerplate_premium_toast_helper()):
+            boilerplate_written.append('src/components/ui/feedback/index.ts')
+        
+        # Write client.ts if missing (boilerplate - same across all projects)
+        if self._write_boilerplate_if_missing(target_path, 'src/connections/client.ts', self._get_boilerplate_client()):
+            boilerplate_written.append('src/connections/client.ts')
+        
+        # Note: ApiResponse, PaginatedResponse, and queryKeys are LLM-generated
+        # as they vary by project/module requirements
+        
+        # Add boilerplate files to result
+        if boilerplate_written:
+            written_files.extend([
+                {'file': f, 'boilerplate': True, 'status': 'written'} 
+                for f in boilerplate_written
+            ])
+        
+        # ── Step 4: Verify imports in generated files ──
+        import_verification = self._verify_imports(target_path, written_files)
+        
         result = {
             'status': 'initialized',
             'target_path': target_path,
@@ -709,7 +1897,9 @@ Use this format:
             'mode': 'project_initialization',
             'existing_files_scanned': len(existing_files),
             'files_written': written_files,
-            'raw_generated_code': generated
+            'raw_generated_code': generated,
+            'package_check': package_check,
+            'import_verification': import_verification
         }
         
         # Store in memory for future learning
@@ -738,6 +1928,9 @@ Use this format:
         # Ensure shared client.ts exists
         self._ensure_shared_client(target_path)
         
+        # Check required packages
+        package_check = self._check_required_packages(target_path)
+        
         # Read existing files for context
         existing_files = self._scan_existing_structure(target_path)
         context_summary = self._build_context_summary(target_path, existing_files)
@@ -756,30 +1949,34 @@ Use this format:
             endpoint_name = f"by_{api_endpoint.strip('/').split('/')[-2]}"
         endpoint_name = endpoint_name.replace('-', '_').replace(' ', '_')
         
-        prompt = (
-            f"Ingest API endpoint and generate full typing stack for: {task}\n\n"
-            f"Target directory: {target_path}\n"
-            f"API Endpoint: {api_endpoint}\n"
-            f"HTTP Method: {http_method}\n"
-        )
-        
-        if memory_context:
-            prompt += f"\n{memory_context}\n"
-        
-        if payload:
-            prompt += f"Request Payload:\n{payload}\n"
-        if response_example:
-            prompt += f"Response Example (captured from real API):\n{response_example}\n"
-            prompt += "\nIMPORTANT: Use the actual response structure above to generate accurate TypeScript types.\n"
-        
-        prompt += f"\nExisting project context:\n{context_summary}\n"
-        
         # Convert endpoint_name to PascalCase for folder
         module_name = endpoint_name.replace('_', ' ').title().replace(' ', '')
         if not module_name:
             module_name = 'Api'
         
-        prompt += f"""
+        # Build context sections
+        context_sections = []
+        
+        base_context = (
+            f"Ingest API endpoint and generate full typing stack for: {task}\n\n"
+            f"Target directory: {target_path}\n"
+            f"API Endpoint: {api_endpoint}\n"
+            f"HTTP Method: {http_method}\n"
+        )
+        context_sections.append(base_context)
+        
+        if memory_context:
+            context_sections.append(memory_context)
+        
+        if payload:
+            context_sections.append(f"Request Payload:\n{payload}\n")
+        if response_example:
+            context_sections.append(f"Response Example (captured from real API):\n{response_example}\nIMPORTANT: Use the actual response structure above to generate accurate TypeScript types.\n")
+        
+        context_sections.append(f"Existing project context:\n{context_summary}\n")
+        
+        # Instructions that must be preserved
+        instructions = f"""
 Generate these 3 files with the `filepath:` format:
 
 - src/types/{endpoint_name}.ts: TypeScript interfaces based on the actual API response
@@ -791,27 +1988,54 @@ IMPORTANT TYPE GENERATION RULES:
 - Handle nested objects, arrays, and optional fields correctly
 - Include both success and error response types if available
 - Use proper TypeScript generics for type safety
+- Types MUST ONLY be defined in src/types/{endpoint_name}.ts
+- DO NOT define types inline in function.ts - import them instead
+- Use ApiResponse<T> wrapper for responses
+- Use CustomError for error typing
 
 IMPORTANT CLIENT USAGE:
 - DO NOT generate client.ts - it's a shared file at src/connections/client.ts
 - Import client from "../client" in function.ts: import {{ client }} from "../client"
+- The import path MUST be exactly: import {{ client }} from "../client"
 - All modules share the same client for common functionality (auth, error handling, etc.)
+
+IMPORTANT FUNCTION.TS RULES:
+- Import types from ../../types/{endpoint_name} (e.g., import {{ Product }} from "../../types/product")
+- DO NOT define interfaces/types inline in function.ts
+- Only export functions that use the imported types
+- Use the imported types in function signatures and return types
+- Add JSDoc comments for each function
+- Helper functions for query params (buildQueryParams)
+- NO @tanstack/react-query imports
+
+IMPORTANT INDEX.TS RULES:
+- Import {{ useQuery, useMutation, useQueryClient, type UseQueryOptions }} from '@tanstack/react-query'
+- Import premiumToast from "../../components/ui/feedback"
+- Import functions from ./function
+- Import queryKeys from "../../constants/queryKeys"
+- Import CustomError from "../../utils/error"
+- Import types from "../../types"
+- Hook naming: useXQuery (queries), useXMutation (mutations)
+- Mutation pattern: onSuccess invalidates queries + premiumToast.success, onError premiumToast.error
+- Use queryKeys.module.lists() for invalidation
 
 ```filepath:src/types/{endpoint_name}.ts
 // TypeScript interfaces based on actual API response
+// Define ALL types here - do not define them in function.ts
 ```
 ```filepath:src/connections/{module_name}/function.ts
 // Pure API functions using client - NO @tanstack/react-query imports
-// Import: import {{ client }} from "../client"
+// Import MUST be: import {{ client }} from "../client"
+// Import types: import {{ TypeName }} from "../../types/{endpoint_name}"
+// DO NOT define types inline - import them from types file
 ```
 ```filepath:src/connections/{module_name}/index.ts
 // TanStack Query hooks with proper error handling and toast notifications
 ```
 """
         
-        # Truncate prompt if too long for 8k context
-        if len(prompt) > 14000:
-            prompt = prompt[:14000] + "\n\n[Prompt truncated due to length]"
+        # Build prompt with smart truncation
+        prompt = self._build_prompt_with_truncation(instructions, context_sections)
         
         messages = [
             {"role": "system", "content": self.system_prompt},
@@ -833,7 +2057,8 @@ IMPORTANT CLIENT USAGE:
             'files_written': written_files,
             'raw_generated_code': generated,
             'module_name': module_name,
-            'endpoint_name': endpoint_name
+            'endpoint_name': endpoint_name,
+            'package_check': package_check
         }
         
         # Store in memory for future learning
@@ -872,41 +2097,52 @@ IMPORTANT CLIENT USAGE:
         
         module_key = module_name.lower()  # For queryKeys.moduleName
         
-        prompt = (
+        # Build context sections
+        context_sections = []
+        
+        base_context = (
             f"Generate an index.ts file (TanStack Query hooks) for: {task}\n\n"
             f"Target: src/connections/{module_name}/index.ts\n"
             f"Hook type: {hook_type}\n\n"
-            f"IMPORTANT: This file must follow the Connection Structure Guide pattern:\n"
-            f"- Import {{ useQuery, useMutation, useQueryClient, type UseQueryOptions }} from '@tanstack/react-query'\n"
-            f"- Import {{ premiumToast }} from \"../../components/ui/feedback\"\n"
-            f"- Import functions from ./function (e.g., getRequest, createRequest)\n"
-            f"- Import {{ queryKeys }} from \"../../constants/queryKeys\"\n"
-            f"- Import type {{ CustomError }} from \"../../utils/error\"\n"
-            f"- Import types from ../../types/{module_key}\n"
-            f"- Hook naming: use{module_name}Query (queries), useCreate{module_name}Mutation (creates), useUpdate{module_name}Mutation (updates), useDelete{module_name}Mutation (deletes)\n"
-            f"- For queries: use queryKey: queryKeys.{module_key}.list(filters) and queryFn\n"
-            f"- For mutations: use mutationFn, onSuccess (invalidateQueries + premiumToast.success), onError (premiumToast.error)\n"
-            f"- Use queryClient.invalidateQueries({{ queryKey: queryKeys.{module_key}.lists() }}) for list invalidation\n"
-            f"- Use queryClient.invalidateQueries({{ queryKey: queryKeys.{module_key}.detail(id) }}) for detail invalidation\n"
-            f"- For error handling: check error.statusCode (e.g., skip toast for 403)\n"
-            f"- For store integration: import from ../../store/authStore etc.\n"
-            f"- Add JSDoc comments on every exported hook\n"
-            f"- Use TypeScript generics for type safety throughout\n"
         )
+        context_sections.append(base_context)
         
         if functions_file:
-            prompt += f"\nFunctions file content:\n{functions_file}\n"
+            context_sections.append(f"Functions file content:\n{functions_file}\n")
         if types_file:
-            prompt += f"\nTypes file content:\n{types_file}\n"
+            context_sections.append(f"Types file content:\n{types_file}\n")
         if query_key_name:
-            prompt += f"\nQuery key name to use: {query_key_name}\n"
+            context_sections.append(f"Query key name to use: {query_key_name}\n")
         
-        prompt += f"\nExisting project context:\n{context_summary}\n"
-        prompt += f"\nWrite the index.ts file using this format:\n\n```filepath:src/connections/{module_name}/index.ts\n// TanStack Query hooks - imports from @tanstack/react-query and ./function\n```\n"
+        context_sections.append(f"Existing project context:\n{context_summary}\n")
         
-        # Truncate prompt if too long for 8k context
-        if len(prompt) > 14000:
-            prompt = prompt[:14000] + "\n\n[Prompt truncated due to length]"
+        # Instructions that must be preserved
+        instructions = f"""
+IMPORTANT: This file must follow the Connection Structure Guide pattern:
+- Import {{ useQuery, useMutation, useQueryClient, type UseQueryOptions }} from '@tanstack/react-query'
+- Import {{ premiumToast }} from "../../components/ui/feedback"
+- Import functions from ./function (e.g., getRequest, createRequest)
+- Import {{ queryKeys }} from "../../constants/queryKeys"
+- Import type {{ CustomError }} from "../../utils/error"
+- Import types from ../../types/{module_key}
+- Hook naming: use{module_name}Query (queries), useCreate{module_name}Mutation (creates), useUpdate{module_name}Mutation (updates), useDelete{module_name}Mutation (deletes)
+- For queries: use queryKey: queryKeys.{module_key}.list(filters) and queryFn
+- For mutations: use mutationFn, onSuccess (invalidateQueries + premiumToast.success), onError (premiumToast.error)
+- Use queryClient.invalidateQueries({{ queryKey: queryKeys.{module_key}.lists() }}) for list invalidation
+- Use queryClient.invalidateQueries({{ queryKey: queryKeys.{module_key}.detail(id) }}) for detail invalidation
+- For error handling: check error.statusCode (e.g., skip toast for 403)
+- For store integration: import from ../../store/authStore etc.
+- Add JSDoc comments on every exported hook
+- Use TypeScript generics for type safety throughout
+
+Write the index.ts file using this format:
+```filepath:src/connections/{module_name}/index.ts
+// TanStack Query hooks - imports from @tanstack/react-query and ./function
+```
+"""
+        
+        # Build prompt with smart truncation
+        prompt = self._build_prompt_with_truncation(instructions, context_sections)
         
         messages = [
             {"role": "system", "content": self.system_prompt},
@@ -945,22 +2181,40 @@ IMPORTANT CLIENT USAGE:
         # Generate a type name from the task
         type_name = ''.join(w.capitalize() for w in task.split()[:3] if w.isalnum())
         
-        prompt = (
+        # Build context sections
+        context_sections = []
+        
+        base_context = (
             f"Generate TypeScript type definitions for: {task}\n\n"
             f"Target directory: {target_path}/src/types/\n"
         )
+        context_sections.append(base_context)
         
         if payload:
-            prompt += f"\nRequest Payload/Schema:\n{payload}\n"
+            context_sections.append(f"Request Payload/Schema:\n{payload}\n")
         if response_example:
-            prompt += f"\nResponse Example:\n{response_example}\n"
+            context_sections.append(f"Response Example:\n{response_example}\n")
         
-        prompt += f"\nExisting project context:\n{context_summary}\n"
-        prompt += f"\nWrite the types file using this format (ONLY interfaces, NO @tanstack/react-query):\n\n```filepath:src/types/{type_name}.ts\n// TypeScript types only\n```\n"
+        context_sections.append(f"Existing project context:\n{context_summary}\n")
         
-        # Truncate prompt if too long for 8k context
-        if len(prompt) > 14000:
-            prompt = prompt[:14000] + "\n\n[Prompt truncated due to length]"
+        # Instructions that must be preserved
+        instructions = f"""
+IMPORTANT TYPE GENERATION RULES:
+- Use ApiResponse<T> wrapper for responses
+- Use CustomError for error typing
+- Handle nested objects, arrays, and optional fields correctly
+- Use proper TypeScript generics for type safety
+- Define both request and response types
+- Use PaginatedResponse<T> for list responses
+
+Write the types file using this format (ONLY interfaces, NO @tanstack/react-query):
+```filepath:src/types/{type_name}.ts
+// TypeScript types only
+```
+"""
+        
+        # Build prompt with smart truncation
+        prompt = self._build_prompt_with_truncation(instructions, context_sections)
         
         messages = [
             {"role": "system", "content": self.system_prompt},
@@ -1000,34 +2254,53 @@ IMPORTANT CLIENT USAGE:
         if module_name.startswith(':'):
             module_name = 'By' + api_endpoint.strip('/').split('/')[-2].title()
         
-        prompt = (
+        # Derive endpoint_name from module_name (lowercase)
+        endpoint_name = module_name.lower()
+        
+        # Build context sections
+        context_sections = []
+        
+        base_context = (
             f"Generate a function.ts file for: {task}\n\n"
             f"Target: src/connections/{module_name}/function.ts\n"
             f"API Endpoint: {api_endpoint}\n"
             f"HTTP Method: {http_method}\n\n"
-            f"IMPORTANT: This file must follow the Connection Structure Guide pattern:\n"
-            f"- Import {{ client }} from \"../client\" (SHARED client, do not create client.ts)\n"
-            f"- Import types from ../../types/ or ../../types/{endpoint_name.lower()}\n"
-            f"- Use client.get<T>(), client.post<T>(), client.put<T>(), client.patch<T>(), or client.delete<T>()\n"
-            f"- Include {{ includeAuth: true }} option on all requests\n"
-            f"- Use URLSearchParams for building query params on GET requests\n"
-            f"- Add JSDoc comments on every exported function\n"
-            f"- Use isFormData: true for file uploads\n"
-            f"- Use errorMessage option for user-friendly error messages\n"
-            f"- Use responseType: \"blob\" for file downloads\n"
-            f"- Do NOT import from @tanstack/react-query in this file\n"
-            f"- DO NOT generate client.ts - it's a shared file at src/connections/client.ts\n"
         )
+        context_sections.append(base_context)
         
         if types_import:
-            prompt += f"\nTypes to use:\n{types_import}\n"
+            context_sections.append(f"Types to use:\n{types_import}\n")
         
-        prompt += f"\nExisting project context:\n{context_summary}\n"
-        prompt += f"\nWrite the function.ts file using this format:\n\n```filepath:src/connections/{module_name}/function.ts\n// Pure API functions using client - NO @tanstack/react-query imports\n```\n"
+        context_sections.append(f"Existing project context:\n{context_summary}\n")
         
-        # Truncate prompt if too long for 8k context
-        if len(prompt) > 14000:
-            prompt = prompt[:14000] + "\n\n[Prompt truncated due to length]"
+        # Instructions that must be preserved
+        instructions = f"""
+IMPORTANT: This file must follow the Connection Structure Guide pattern:
+- Import {{ client }} from "../client" (SHARED client at src/connections/client.ts)
+- Import types from ../../types/ or ../../types/{endpoint_name}
+- Use client.get<T>(), client.post<T>(), client.put<T>(), client.patch<T>(), or client.delete<T>()
+- Client options: includeAuth, isFormData, customHeaders, errorMessage, params, responseType, authType
+- Use URLSearchParams for building query params on GET requests
+- Add JSDoc comments on every exported function
+- Helper functions for query params (buildQueryParams)
+- Use isFormData: true for file uploads
+- Use errorMessage option for user-friendly error messages
+- Use responseType: "blob" for file downloads
+- Do NOT import from @tanstack/react-query in this file
+- DO NOT generate client.ts - it's a shared file at src/connections/client.ts
+- Import path MUST be: import {{ client }} from "../client"
+- DO NOT define types inline - import them from types file
+- Use ApiResponse<T> wrapper for responses
+- Use CustomError for error typing
+
+Write the function.ts file using this format:
+```filepath:src/connections/{module_name}/function.ts
+// Pure API functions using client - NO @tanstack/react-query imports
+```
+"""
+        
+        # Build prompt with smart truncation
+        prompt = self._build_prompt_with_truncation(instructions, context_sections)
         
         messages = [
             {"role": "system", "content": self.system_prompt},

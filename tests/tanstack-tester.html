@@ -223,6 +223,121 @@
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">&#128736; Agent Testing (New Features)</div>
+    <div class="card-body">
+      <div class="form-group">
+        <label>Test Type</label>
+        <select id="testType" onchange="updateTestUI()">
+          <option value="package_check">Package Dependency Check</option>
+          <option value="self_improvement">Self-Improvement Analysis</option>
+          <option value="memory_cache">Memory Cache Test</option>
+          <option value="boilerplate">Boilerplate Template Test</option>
+          <option value="prompt_truncation">Prompt Truncation Test</option>
+        </select>
+      </div>
+      
+      <!-- Package Check UI -->
+      <div id="packageCheckUI" class="test-ui">
+        <div class="form-group">
+          <label>Target Directory <span class="hint">Path to check package.json</span></label>
+          <input type="text" id="pkgCheckPath" value="D:/Projects/test-connections" placeholder="D:/Projects/my-project">
+        </div>
+        <button type="button" class="btn btn-primary" onclick="testPackageCheck()" style="margin-top: 8px;">
+          <span class="spinner"></span>
+          <span class="btn-text">&#10004; Check Packages</span>
+        </button>
+      </div>
+      
+      <!-- Self-Improvement UI -->
+      <div id="selfImprovementUI" class="test-ui" style="display: none;">
+        <div class="form-group">
+          <label>Target Directory <span class="hint">Path to analyze for improvements</span></label>
+          <input type="text" id="improvePath" value="D:/Projects/test-connections" placeholder="D:/Projects/my-project">
+        </div>
+        <div class="form-group">
+          <label>Auto-Analysis Toggle</label>
+          <select id="autoAnalyzeToggle">
+            <option value="false">Disabled (default - better performance)</option>
+            <option value="true">Enabled (automatic analysis after generation)</option>
+          </select>
+        </div>
+        <div class="action-buttons">
+          <button type="button" class="action-btn primary" onclick="testSelfImprovement()">
+            &#128202; Analyze Improvements
+          </button>
+          <button type="button" class="action-btn" onclick="setAutoAnalyze()">
+            &#9881; Set Auto-Analyze
+          </button>
+        </div>
+      </div>
+      
+      <!-- Memory Cache UI -->
+      <div id="memoryCacheUI" class="test-ui" style="display: none;">
+        <div class="form-group">
+          <label>Test Query <span class="hint">Query to test caching</span></label>
+          <input type="text" id="cacheQuery" value="products API endpoint" placeholder="Enter test query">
+        </div>
+        <div class="form-group">
+          <label>Endpoint <span class="hint">(optional)</span></label>
+          <input type="text" id="cacheEndpoint" value="/api/v1/products" placeholder="/api/v1/endpoint">
+        </div>
+        <div class="action-buttons">
+          <button type="button" class="action-btn primary" onclick="testMemoryCache()">
+            &#9889; Test Cache
+          </button>
+          <button type="button" class="action-btn" onclick="clearMemoryCache()">
+            &#128465; Clear Cache
+          </button>
+        </div>
+      </div>
+      
+      <!-- Boilerplate UI -->
+      <div id="boilerplateUI" class="test-ui" style="display: none;">
+        <div class="form-group">
+          <label>Module Name <span class="hint">For queryKeys template</span></label>
+          <input type="text" id="boilerplateModule" value="Product" placeholder="Product">
+        </div>
+        <div class="form-group">
+          <label>Template Type</label>
+          <select id="boilerplateType">
+            <option value="customError">Custom Error (error.ts)</option>
+            <option value="client">API Client (client.ts)</option>
+            <option value="apiClient">API Request Utility (apiClient.ts)</option>
+            <option value="premiumToast">Premium Toast Component (PremiumToast.tsx)</option>
+            <option value="premiumToastHelper">Premium Toast Helper (index.ts)</option>
+          </select>
+        </div>
+        <button type="button" class="btn btn-primary" onclick="testBoilerplate()" style="margin-top: 8px;">
+          <span class="spinner"></span>
+          <span class="btn-text">&#128196; Generate Template</span>
+        </button>
+      </div>
+      
+      <!-- Prompt Truncation UI -->
+      <div id="promptTruncationUI" class="test-ui" style="display: none;">
+        <div class="form-group">
+          <label>Instructions Length <span class="hint">Characters</span></label>
+          <input type="number" id="instructionsLength" value="2000" min="100" max="10000">
+        </div>
+        <div class="form-group">
+          <label>Context Sections <span class="hint">Number of context blocks</span></label>
+          <input type="number" id="contextSections" value="5" min="1" max="20">
+        </div>
+        <div class="form-group">
+          <label>Max Length <span class="hint">Total prompt limit</span></label>
+          <input type="number" id="maxLength" value="14000" min="1000" max="32000">
+        </div>
+        <button type="button" class="btn btn-primary" onclick="testPromptTruncation()" style="margin-top: 8px;">
+          <span class="spinner"></span>
+          <span class="btn-text">&#9986; Test Truncation</span>
+        </button>
+      </div>
+      
+      <div id="testResults" style="margin-top: 16px;"></div>
+    </div>
+  </div>
+
   <button type="button" class="btn btn-primary" id="generateBtn" onclick="generate()">
     <span class="spinner"></span>
     <span class="btn-text">&#9654; Generate Types &amp; Hooks</span>
@@ -327,12 +442,45 @@ async function sendChatMessage() {
   try {
     const serverUrl = getEl('serverUrl').value.trim() || window.location.origin;
     
+    // Build context from generated code and API capture (truncated to fit context)
+    let contextMessage = '';
+    const MAX_CONTEXT_LENGTH = 4000; // Leave room for system prompt and user message
+    
+    if (currentGeneratedCode) {
+      // Truncate generated code if too long
+      let code = currentGeneratedCode;
+      if (code.length > MAX_CONTEXT_LENGTH / 2) {
+        code = code.substring(0, MAX_CONTEXT_LENGTH / 2) + '\n\n... (code truncated)';
+      }
+      contextMessage += `\n\nGENERATED CODE:\n${code}`;
+    }
+    if (currentApiCapture) {
+      // Truncate API capture if too long
+      let apiCapture = JSON.stringify(currentApiCapture, null, 2);
+      if (apiCapture.length > MAX_CONTEXT_LENGTH / 2) {
+        apiCapture = apiCapture.substring(0, MAX_CONTEXT_LENGTH / 2) + '\n\n... (API capture truncated)';
+      }
+      contextMessage += `\n\nAPI CAPTURE:\n${apiCapture}`;
+    }
+    
     const response = await fetch(serverUrl + '/llm/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: [
-          { role: 'system', content: 'You are a TypeScript and TanStack Query expert. Help the user refine or understand the generated code. Be concise and practical.' },
+          { 
+            role: 'system', 
+            content: `You are a TypeScript and TanStack Query expert. Help the user refine or understand the generated code. Be concise and practical.
+
+The user has just generated TanStack Query code from an API. Here is the context:
+${contextMessage}
+
+When the user asks about issues, refer to the actual generated code above. Check for:
+- Missing imports (especially types from ../../types/)
+- Incorrect import paths (should be "../client" for client)
+- Type definitions inline vs imported from types file
+- Any other code issues in the generated files`
+          },
           ...chatHistory,
           { role: 'user', content: message }
         ],
@@ -345,10 +493,26 @@ async function sendChatMessage() {
     // Remove loading message
     loadingDiv.remove();
     
-    if (data.status === 'success' && data.result.message) {
-      addChatMessage('assistant', data.result.message);
+    // Handle different response formats
+    let assistantMessage = '';
+    
+    // Format 1: Standard API response with result.message
+    if (data.status === 'success' && data.result && data.result.message) {
+      assistantMessage = data.result.message;
+    }
+    // Format 2: Direct LLM response with output array
+    else if (data.output && Array.isArray(data.output) && data.output.length > 0) {
+      assistantMessage = data.output[0].content || '';
+    }
+    // Format 3: Direct message field
+    else if (data.message) {
+      assistantMessage = data.message;
+    }
+    
+    if (assistantMessage) {
+      addChatMessage('assistant', assistantMessage);
     } else {
-      addChatMessage('assistant', 'Sorry, I encountered an error processing your request.');
+      addChatMessage('assistant', 'Sorry, I encountered an error processing your request. Response format: ' + JSON.stringify(data).substring(0, 200));
     }
   } catch (error) {
     loadingDiv.remove();
@@ -767,6 +931,447 @@ async function generate() {
 function toggleFile(id) {
   const el = document.getElementById(id);
   if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+// Test UI Management
+function updateTestUI() {
+  const testType = getEl('testType').value;
+  document.querySelectorAll('.test-ui').forEach(el => el.style.display = 'none');
+  
+  // Map test type values to element IDs
+  const idMap = {
+    'package_check': 'packageCheckUI',
+    'self_improvement': 'selfImprovementUI',
+    'memory_cache': 'memoryCacheUI',
+    'boilerplate': 'boilerplateUI',
+    'prompt_truncation': 'promptTruncationUI'
+  };
+  
+  const targetId = idMap[testType];
+  if (targetId) {
+    const el = document.getElementById(targetId);
+    if (el) el.style.display = 'block';
+  }
+  
+  getEl('testResults').innerHTML = '';
+}
+
+// Package Check Test
+async function testPackageCheck() {
+  const btn = event.target;
+  const targetPath = getEl('pkgCheckPath').value.trim();
+  
+  if (!targetPath) {
+    showToast('Enter target directory', 'error');
+    return;
+  }
+  
+  btn.classList.add('loading');
+  btn.disabled = true;
+  
+  try {
+    const serverUrl = getEl('serverUrl').value.trim() || window.location.origin;
+    
+    const response = await fetch(serverUrl + '/agents/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent_type: 'tanstack',
+        task_type: 'check_packages',
+        task_data: {
+          target_path: targetPath
+        }
+      })
+    });
+    
+    const data = await response.json();
+    
+    let html = '<div class="card fade-in"><div class="card-header">&#10004; Package Check Results</div><div class="card-body">';
+    
+    if (data.result && data.result.package_check) {
+      const pkg = data.result.package_check;
+      html += `
+        <div style="margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <span style="width: 20px; height: 20px; border-radius: 4px; display: flex; align-items: center; justify-content: center; background: ${pkg.has_react_query ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}; color: ${pkg.has_react_query ? 'var(--success)' : 'var(--error)'}; font-size: 12px;">${pkg.has_react_query ? '&#10003;' : '&#10007;'}</span>
+            <span>@tanstack/react-query</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="width: 20px; height: 20px; border-radius: 4px; display: flex; align-items: center; justify-content: center; background: ${pkg.has_eslint_plugin ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}; color: ${pkg.has_eslint_plugin ? 'var(--success)' : 'var(--error)'}; font-size: 12px;">${pkg.has_eslint_plugin ? '&#10003;' : '&#10007;'}</span>
+            <span>@tanstack/eslint-plugin-query</span>
+          </div>
+        </div>
+      `;
+      
+      if (pkg.warnings && pkg.warnings.length > 0) {
+        html += '<div style="margin-top: 12px;"><div style="font-size: 12px; font-weight: 600; margin-bottom: 8px; color: var(--text-muted);">Warnings:</div>';
+        pkg.warnings.forEach(w => {
+          html += `<div style="padding: 8px 12px; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); border-radius: 4px; font-size: 12px; margin-bottom: 4px; color: var(--error);">${escapeHtml(w)}</div>`;
+        });
+        html += '</div>';
+      }
+    } else {
+      html += '<div style="color: var(--error);">No package check results returned</div>';
+    }
+    
+    html += '</div></div>';
+    getEl('testResults').innerHTML = html;
+    showToast('Package check complete', 'success');
+  } catch (error) {
+    getEl('testResults').innerHTML = `<div class="status-bar error fade-in">Error: ${escapeHtml(error.message)}</div>`;
+    showToast('Test failed', 'error');
+  } finally {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+  }
+}
+
+// Self-Improvement Test
+async function testSelfImprovement() {
+  const btn = event.target;
+  const targetPath = getEl('improvePath').value.trim();
+  
+  if (!targetPath) {
+    showToast('Enter target directory', 'error');
+    return;
+  }
+  
+  btn.classList.add('loading');
+  btn.disabled = true;
+  
+  try {
+    const serverUrl = getEl('serverUrl').value.trim() || window.location.origin;
+    
+    const response = await fetch(serverUrl + '/agents/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent_type: 'tanstack',
+        task_type: 'analyze_improvements',
+        task_data: {
+          target_path: targetPath
+        }
+      })
+    });
+    
+    const data = await response.json();
+    
+    let html = '<div class="card fade-in"><div class="card-header">&#128202; Self-Improvement Analysis</div><div class="card-body">';
+    
+    if (data.result && data.result.suggestions) {
+      const suggestions = data.result.suggestions;
+      html += `<div style="margin-bottom: 12px; font-size: 13px;">Found ${suggestions.length} suggestion(s)</div>`;
+      
+      suggestions.forEach((s, i) => {
+        html += `
+          <div style="padding: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+              <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; background: ${s.priority === 'high' ? 'rgba(239,68,68,0.2)' : s.priority === 'medium' ? 'rgba(245,158,11,0.2)' : 'rgba(99,102,241,0.2)'}; color: ${s.priority === 'high' ? 'var(--error)' : s.priority === 'medium' ? '#f59e0b' : 'var(--primary)'};">${s.priority}</span>
+              <span style="font-size: 12px; font-weight: 600;">${escapeHtml(s.type)}</span>
+            </div>
+            <div style="font-size: 13px; color: var(--text); margin-bottom: 4px;">${escapeHtml(s.suggestion)}</div>
+            ${s.affects_core !== undefined ? `<div style="font-size: 11px; color: var(--text-muted);">Affects core base: ${s.affects_core ? 'Yes' : 'No'}</div>` : ''}
+          </div>
+        `;
+      });
+      
+      html += `<div style="margin-top: 12px; font-size: 11px; color: var(--text-muted);">Core base unchanged: ${data.result.metadata?.core_base_unchanged ? 'Yes' : 'No'}</div>`;
+    } else {
+      html += '<div style="color: var(--text-muted);">No suggestions found or analysis failed</div>';
+    }
+    
+    html += '</div></div>';
+    getEl('testResults').innerHTML = html;
+    showToast('Analysis complete', 'success');
+  } catch (error) {
+    getEl('testResults').innerHTML = `<div class="status-bar error fade-in">Error: ${escapeHtml(error.message)}</div>`;
+    showToast('Test failed', 'error');
+  } finally {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+  }
+}
+
+async function setAutoAnalyze() {
+  const enabled = getEl('autoAnalyzeToggle').value === 'true';
+  
+  try {
+    const serverUrl = getEl('serverUrl').value.trim() || window.location.origin;
+    
+    const response = await fetch(serverUrl + '/agents/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent_type: 'tanstack',
+        task_type: 'set_auto_analyze',
+        task_data: {
+          enabled: enabled
+        }
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.result && data.result.success) {
+      showToast(`Auto-analysis ${enabled ? 'enabled' : 'disabled'}`, 'success');
+      getEl('testResults').innerHTML = `<div class="status-bar success fade-in">Auto-analysis set to ${enabled ? 'enabled' : 'disabled'}</div>`;
+    } else {
+      showToast('Failed to set auto-analysis', 'error');
+    }
+  } catch (error) {
+    showToast('Error: ' + error.message, 'error');
+  }
+}
+
+// Memory Cache Test
+async function testMemoryCache() {
+  const btn = event.target;
+  const query = getEl('cacheQuery').value.trim();
+  const endpoint = getEl('cacheEndpoint').value.trim();
+  
+  if (!query) {
+    showToast('Enter test query', 'error');
+    return;
+  }
+  
+  btn.classList.add('loading');
+  btn.disabled = true;
+  
+  try {
+    const serverUrl = getEl('serverUrl').value.trim() || window.location.origin;
+    
+    // First call
+    const start1 = Date.now();
+    const response1 = await fetch(serverUrl + '/agents/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent_type: 'tanstack',
+        task_type: 'test_cache',
+        task_data: {
+          query: query,
+          endpoint: endpoint
+        }
+      })
+    });
+    const data1 = await response1.json();
+    const time1 = Date.now() - start1;
+    
+    // Second call (should be cached)
+    const start2 = Date.now();
+    const response2 = await fetch(serverUrl + '/agents/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent_type: 'tanstack',
+        task_type: 'test_cache',
+        task_data: {
+          query: query,
+          endpoint: endpoint
+        }
+      })
+    });
+    const data2 = await response2.json();
+    const time2 = Date.now() - start2;
+    
+    const speedup = time1 > 0 ? ((time1 - time2) / time1 * 100).toFixed(1) : 0;
+    
+    let html = '<div class="card fade-in"><div class="card-header">&#9889; Memory Cache Test</div><div class="card-body">';
+    html += `
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+        <div style="padding: 12px; background: var(--surface-2); border-radius: 6px;">
+          <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">First Call</div>
+          <div style="font-size: 18px; font-weight: 700; color: var(--primary);">${time1}ms</div>
+        </div>
+        <div style="padding: 12px; background: var(--surface-2); border-radius: 6px;">
+          <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Cached Call</div>
+          <div style="font-size: 18px; font-weight: 700; color: var(--success);">${time2}ms</div>
+        </div>
+      </div>
+      <div style="padding: 8px 12px; background: ${parseFloat(speedup) > 0 ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)'}; border: 1px solid ${parseFloat(speedup) > 0 ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}; border-radius: 4px; font-size: 13px; color: ${parseFloat(speedup) > 0 ? 'var(--success)' : 'var(--error)'};">
+        Speedup: ${speedup}% ${parseFloat(speedup) > 0 ? '&#9989;' : '&#10007;'}
+      </div>
+    `;
+    html += '</div></div>';
+    getEl('testResults').innerHTML = html;
+    showToast('Cache test complete', 'success');
+  } catch (error) {
+    getEl('testResults').innerHTML = `<div class="status-bar error fade-in">Error: ${escapeHtml(error.message)}</div>`;
+    showToast('Test failed', 'error');
+  } finally {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+  }
+}
+
+async function clearMemoryCache() {
+  try {
+    const serverUrl = getEl('serverUrl').value.trim() || window.location.origin;
+    
+    const response = await fetch(serverUrl + '/agents/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent_type: 'tanstack',
+        task_type: 'clear_cache',
+        task_data: {}
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.result && data.result.success) {
+      showToast('Cache cleared', 'success');
+      getEl('testResults').innerHTML = `<div class="status-bar success fade-in">Memory cache cleared</div>`;
+    } else {
+      showToast('Failed to clear cache', 'error');
+    }
+  } catch (error) {
+    showToast('Error: ' + error.message, 'error');
+  }
+}
+
+// Boilerplate Template Test
+async function testBoilerplate() {
+  const btn = event.target;
+  const templateType = getEl('boilerplateType').value;
+  
+  btn.classList.add('loading');
+  btn.disabled = true;
+  
+  try {
+    const serverUrl = getEl('serverUrl').value.trim() || window.location.origin;
+    
+    const response = await fetch(serverUrl + '/agents/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent_type: 'tanstack',
+        task_type: 'get_boilerplate',
+        task_data: {
+          template_type: templateType
+        }
+      })
+    });
+    
+    const data = await response.json();
+    
+    let html = '<div class="card fade-in"><div class="card-header">&#128196; Boilerplate Template</div><div class="card-body">';
+    
+    if (data.result && data.result.template) {
+      const fileNameMap = {
+        'customError': 'error.ts',
+        'client': 'client.ts',
+        'apiClient': 'apiClient.ts',
+        'premiumToast': 'PremiumToast.tsx',
+        'premiumToastHelper': 'index.ts'
+      };
+      const fileName = fileNameMap[templateType] || templateType + '.ts';
+      html += `
+        <div style="margin-bottom: 12px;">
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">Template Type: ${escapeHtml(templateType)}</div>
+          <div style="font-size: 12px; color: var(--text-muted);">File: ${escapeHtml(fileName)}</div>
+        </div>
+        <div class="code-block">
+          <div class="code-header">
+            <span>${escapeHtml(fileName)}</span>
+            <button onclick="copyText(this.parentElement.nextElementSibling.textContent)" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;">Copy</button>
+          </div>
+          <div class="code-body">${escapeHtml(data.result.template)}</div>
+        </div>
+      `;
+    } else {
+      html += '<div style="color: var(--error);">Failed to generate template</div>';
+    }
+    
+    html += '</div></div>';
+    getEl('testResults').innerHTML = html;
+    showToast('Template generated', 'success');
+  } catch (error) {
+    getEl('testResults').innerHTML = `<div class="status-bar error fade-in">Error: ${escapeHtml(error.message)}</div>`;
+    showToast('Test failed', 'error');
+  } finally {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+  }
+}
+
+// Prompt Truncation Test
+async function testPromptTruncation() {
+  const btn = event.target;
+  const instructionsLength = parseInt(getEl('instructionsLength').value);
+  const contextSections = parseInt(getEl('contextSections').value);
+  const maxLength = parseInt(getEl('maxLength').value);
+  
+  btn.classList.add('loading');
+  btn.disabled = true;
+  
+  try {
+    const serverUrl = getEl('serverUrl').value.trim() || window.location.origin;
+    
+    // Generate test data
+    const instructions = 'A'.repeat(instructionsLength);
+    const contexts = [];
+    for (let i = 0; i < contextSections; i++) {
+      contexts.push('Context section ' + (i + 1) + ': ' + 'B'.repeat(Math.floor(maxLength / contextSections / 2)));
+    }
+    
+    const response = await fetch(serverUrl + '/agents/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent_type: 'tanstack',
+        task_type: 'test_truncation',
+        task_data: {
+          instructions: instructions,
+          context_sections: contexts,
+          max_length: maxLength
+        }
+      })
+    });
+    
+    const data = await response.json();
+    
+    let html = '<div class="card fade-in"><div class="card-header">&#9986; Prompt Truncation Test</div><div class="card-body>';
+    
+    if (data.result) {
+      const result = data.result;
+      html += `
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px;">
+          <div style="padding: 12px; background: var(--surface-2); border-radius: 6px;">
+            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Instructions</div>
+            <div style="font-size: 16px; font-weight: 700; color: var(--primary);">${result.instructions_length || 0}</div>
+            <div style="font-size: 10px; color: var(--text-muted);">chars</div>
+          </div>
+          <div style="padding: 12px; background: var(--surface-2); border-radius: 6px;">
+            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Context</div>
+            <div style="font-size: 16px; font-weight: 700; color: var(--success);">${result.context_length || 0}</div>
+            <div style="font-size: 10px; color: var(--text-muted);">chars</div>
+          </div>
+          <div style="padding: 12px; background: var(--surface-2); border-radius: 6px;">
+            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Total</div>
+            <div style="font-size: 16px; font-weight: 700; color: ${result.total_length > maxLength ? 'var(--error)' : 'var(--success)'};">${result.total_length || 0}</div>
+            <div style="font-size: 10px; color: var(--text-muted);">/ ${maxLength}</div>
+          </div>
+        </div>
+        <div style="padding: 8px 12px; background: ${result.instructions_preserved ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)'}; border: 1px solid ${result.instructions_preserved ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}; border-radius: 4px; font-size: 13px; color: ${result.instructions_preserved ? 'var(--success)' : 'var(--error)'};">
+          ${result.instructions_preserved ? '&#10003; Instructions preserved' : '&#10007; Instructions truncated'}
+        </div>
+      `;
+    } else {
+      html += '<div style="color: var(--error);">Test failed</div>';
+    }
+    
+    html += '</div></div>';
+    getEl('testResults').innerHTML = html;
+    showToast('Truncation test complete', 'success');
+  } catch (error) {
+    getEl('testResults').innerHTML = `<div class="status-bar error fade-in">Error: ${escapeHtml(error.message)}</div>`;
+    showToast('Test failed', 'error');
+  } finally {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+  }
 }
 </script>
 </body>
